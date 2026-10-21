@@ -281,14 +281,14 @@ mod tests {
     use super::*;
     #[test]
     fn normalize_state_and_art() {
-        let base = address("http://volumio.local").unwrap();
+        let base = address("http://192.168.5.121").unwrap();
         let s = state(
             json!({"status":"pause","volume":"20","albumart":"/albumart?a=b%20c"}),
             &base,
         )
         .unwrap();
         assert_eq!(s.volume, Some(20));
-        assert_eq!(s.albumart, "http://volumio.local/albumart?a=b%20c");
+        assert_eq!(s.albumart, "http://192.168.5.121/albumart?a=b%20c");
         assert_eq!(s.title, "");
         assert!(!s.disable_volume_control);
         assert!(

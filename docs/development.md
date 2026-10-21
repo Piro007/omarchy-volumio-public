@@ -76,10 +76,27 @@ cached QML on the tested version; restart the shell after source updates.
 ## Distribution
 
 Generated `bin/`, `target/`, `dist/` and Python caches are ignored by Git.
-An archive contains QML, manifest, executable, license and documentation.
-Validate it after extraction and verify its checksum. It targets the build
-machine's architecture and libc. Source builds on another architecture are
-preferred to assuming binary compatibility.
+Run `bash scripts/package.sh` to produce a native archive and its SHA-256
+file in `dist/`. An archive contains QML, manifest, executable, license and
+documentation. Regenerate it after source changes before distribution.
+
+On a compatible Omarchy machine, verify the checksum with
+`sha256sum -c <archive>.tar.gz.sha256` from the directory containing both files.
+Extract the archive into a new
+`~/.config/omarchy/plugins/delormous.volumio/` directory using
+`tar -xzf <archive>.tar.gz --strip-components=1 -C <plugin-directory>`.
+Do not overwrite an existing installation. Then run:
+
+```sh
+omarchy plugin validate "$HOME/.config/omarchy/plugins/delormous.volumio"
+omarchy-shell shell rescanPlugins
+omarchy plugin enable delormous.volumio
+```
+
+Archives contain the compiled executable, so no local Rust build is needed.
+They do not support `omarchy plugin update`; replace them explicitly or use
+the Git installation documented in the README. Archives target the build
+machine's architecture and libc; prefer source builds on other architectures.
 
 Pinned sources/toolchain/dependencies provide repeatable source builds,
 not guaranteed bit-identical artifacts across machines. No CI publication,

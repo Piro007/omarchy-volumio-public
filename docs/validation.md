@@ -14,7 +14,7 @@ Environment: Omarchy 4.0.6, Qt 6.12.0, Rust 1.99.1, x86_64 Linux.
 | Shell script syntax and Python compilation | Passed. |
 | Clean local Git clone build | Passed from an unrelated working directory, with conflicting Cargo target/target-directory environment overrides. Binary appeared in the clone's `bin/`; Git stayed clean. |
 | Native archive | SHA-256, extracted manifest, expected contents, executable startup and EOF shutdown passed. No Git/build directories included. |
-| Installed-copy build and installer | Passed from an unrelated directory. Executable built in the installed copy. Existing bar layout and settings remained unchanged. |
+| Installed-copy build and former installer wrapper | Passed from an unrelated directory. Executable built in the installed copy. Existing bar layout and settings remained unchanged. |
 | Real Volumio read-only check | Final read-only check matched API metadata and retrieved artwork while the player was playing at volume 21. Finalization sent no playback/volume commands. |
 
 Generated artifacts are ignored by Git. No history rewrite, push, release
@@ -67,3 +67,19 @@ prior/manual results, not fresh tests of this revision.
 The three identified finalization issues are resolved and the source MVP is
 ready for an initial public preview with these limitations. Nothing was
 published and repository visibility was not changed.
+
+
+## Public README and installation cleanup
+
+The optional `scripts/install.sh` wrapper was removed after the validation
+above. Installation now uses the official add, build-installed-copy and
+enable sequence documented in the README, targeting
+`https://github.com/Piro007/omarchy-volumio-public.git`. The historical
+installer result remains as evidence for the former wrapper, not a current
+installation entry point.
+
+Documentation links, command paths and obsolete installation references were
+checked, and `omarchy plugin validate .` passed. Runtime code and the build
+script were unchanged; Rust and live-player tests were not repeated. These
+checks do not establish that the new remote already contains this revision.
+No Git remote was changed and nothing was pushed or published by this cleanup.
