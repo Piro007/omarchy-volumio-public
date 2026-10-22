@@ -238,6 +238,85 @@ TestCase {
         deliver({type: "state", state: {status: "play", volume: 20}});
         compare(Harness.requests.length, count + 1);
     }
+    function playlistsOnline() {
+        deliver({type: "ready", protocol: 1, features: ["albums", "playlists"]});
+        deliver({type: "state", state: {status: "pause", volume: 20, disableVolumeControl: false}});
+    }
+    function test_playlist_cache_refresh_and_cancellation() {
+        playlistsOnline();
+        service.browsePlaylists(false);
+        var id = service.playlistBrowseId;
+        verify(service.browsingPlaylists);
+        deliver({type: "playlists", id: id, items: [{name: "Été & Jazz"}], done: true});
+        compare(service.playlists.count, 1);
+        compare(service.playlists.get(0).name, "Été & Jazz");
+        verify(service.playlistsComplete);
+        var count = Harness.requests.length;
+        service.browsePlaylists(false);
+        compare(Harness.requests.length, count);
+        service.browsePlaylists(true);
+        compare(service.playlists.count, 0);
+        id = service.playlistBrowseId;
+        service.cancelBrowse();
+        compare(Harness.requests[Harness.requests.length - 1].op, "cancel_browse");
+        service.browsePlaylists(false);
+        var newId = service.playlistBrowseId;
+        deliver({type: "playlists", id: id, items: [{name: "Stale"}], done: true});
+        compare(service.playlists.count, 0);
+        compare(service.playlistBrowseId, newId);
+        deliver({type: "playlists", id: newId, items: [], done: true});
+        verify(service.playlistsComplete);
+        compare(service.playlists.count, 0);
+        count = Harness.requests.length;
+        service.browsePlaylists(false);
+        compare(Harness.requests.length, count);
+        deliver({type: "configured", address: "http://new.local/"});
+        verify(!service.playlistsComplete);
+        compare(service.playlists.count, 0);
+    }
+    function test_playlist_errors_and_backend_compatibility() {
+        online();
+        service.browsePlaylists(false);
+        verify(service.playlistError.indexOf("updated backend") >= 0);
+        compare(Harness.requests.length, 1);
+        playlistsOnline();
+        service.browsePlaylists(false);
+        deliver({type: "library_error", id: service.playlistBrowseId, error: "Could not list playlists"});
+        verify(!service.browsingPlaylists);
+        compare(service.playlistError, "Could not list playlists");
+        verify(service.online);
+        service.action("play");
+        compare(Harness.requests[Harness.requests.length - 1].op, "play");
+    }
+    function test_playlist_activation_blocks_duplicates_and_cleans_up_without_replay() {
+        playlistsOnline();
+        service.playPlaylist("Été & Jazz");
+        var id = service.pendingPlaylist;
+        verify(service.busy);
+        compare(service.activatingPlaylist, "Été & Jazz");
+        compare(Harness.requests[Harness.requests.length - 1].name, "Été & Jazz");
+        var count = Harness.requests.length;
+        service.playPlaylist("Other");
+        service.playAlbum("albums://Artist/Album");
+        service.action("next");
+        compare(Harness.requests.length, count);
+        deliver({type: "result", id: id, ok: false, error: "Queue may have changed"});
+        verify(!service.busy);
+        verify(service.online);
+        compare(service.activatingPlaylist, "");
+        compare(service.playlistError, "Queue may have changed");
+        compare(Harness.requests.length, count + 1);
+        compare(Harness.requests[count].op, "refresh");
+        service.playPlaylist("Other");
+        service.failed();
+        compare(service.pendingPlaylist, -1);
+        compare(service.activatingPlaylist, "");
+        verify(!service.supportsPlaylists);
+        count = Harness.requests.length;
+        playlistsOnline();
+        compare(Harness.requests.length, count + 1);
+        compare(Harness.requests[count].op, "configure");
+    }
     function test_missing_backend_reports_failure() {
         service.startBackend();
         compare(Harness.starts, 1);

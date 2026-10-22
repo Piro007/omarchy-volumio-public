@@ -13,6 +13,8 @@ Ui.Panel {
     property var hostWidget: null
     property var service: null
     property bool browsingAlbums: false
+    property bool browsingPlaylists: false
+    readonly property bool browsingLibrary: browsingAlbums || browsingPlaylists
     readonly property var snapshot: service ? service.snapshot : ({})
     readonly property bool online: service ? service.online : false
     readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
@@ -23,16 +25,27 @@ Ui.Panel {
             if (service) service.refresh();
         } else {
             browsingAlbums = false;
+            browsingPlaylists = false;
             if (service) service.cancelBrowse();
         }
     }
     function showAlbums() {
         addressField.focus = false;
+        if (service) service.cancelBrowse();
+        browsingPlaylists = false;
         browsingAlbums = true;
         Qt.callLater(browser.enter);
     }
-    function hideAlbums() {
+    function showPlaylists() {
+        addressField.focus = false;
+        if (service) service.cancelBrowse();
         browsingAlbums = false;
+        browsingPlaylists = true;
+        Qt.callLater(playlistBrowser.enter);
+    }
+    function hideBrowser() {
+        browsingAlbums = false;
+        browsingPlaylists = false;
         if (service) service.cancelBrowse();
         keys.forceActiveFocus();
     }
@@ -46,12 +59,12 @@ Ui.Panel {
         bar: root.bar
         open: root.opened
         focusTarget: keys
-        contentWidth: panel.fittedContentWidth(Style.space(root.browsingAlbums ? 560 : 340))
-        contentHeight: panel.fittedContentHeight(root.browsingAlbums ? Style.space(520) : content.implicitHeight)
+        contentWidth: panel.fittedContentWidth(Style.space(root.browsingAlbums ? 560 : root.browsingPlaylists ? 420 : 340))
+        contentHeight: panel.fittedContentHeight(root.browsingLibrary ? Style.space(520) : content.implicitHeight)
         Ui.PanelKeyCatcher {
             id: keys
             anchors.fill: parent
-            blocked: root.browsingAlbums || addressField.activeFocus
+            blocked: root.browsingLibrary || addressField.activeFocus
             onCloseRequested: root.close()
             onTabRequested: function(direction) { root.switchPanel(direction); }
             onActivateRequested: if (root.service) root.service.action(root.snapshot.status === "play" ? "pause" : "play")
@@ -66,12 +79,22 @@ Ui.Panel {
                 service: root.service
                 foreground: root.foreground
                 fontFamily: root.fontFamily
-                onBackRequested: root.hideAlbums()
+                onBackRequested: root.hideBrowser()
+                onCloseRequested: root.close()
+            }
+            PlaylistBrowser {
+                id: playlistBrowser
+                anchors.fill: parent
+                visible: root.browsingPlaylists
+                service: root.service
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onBackRequested: root.hideBrowser()
                 onCloseRequested: root.close()
             }
             Column {
                 id: content
-                visible: !root.browsingAlbums
+                visible: !root.browsingLibrary
                 width: parent.width
                 spacing: Style.space(12)
                 Row {
@@ -155,12 +178,22 @@ Ui.Panel {
                         Keys.onRightPressed: if (enabled) root.service.setVolume(Math.min(100, value + 1), true)
                     }
                 }
-                Ui.Button {
-                    text: "Browse albums"
-                    foreground: root.foreground
-                    focusable: true
-                    enabled: root.service && root.service.ready
-                    onClicked: root.showAlbums()
+                Row {
+                    spacing: Style.space(8)
+                    Ui.Button {
+                        text: "Browse albums"
+                        foreground: root.foreground
+                        focusable: true
+                        enabled: root.service && root.service.ready
+                        onClicked: root.showAlbums()
+                    }
+                    Ui.Button {
+                        text: "Browse playlists"
+                        foreground: root.foreground
+                        focusable: true
+                        enabled: root.service && root.service.ready
+                        onClicked: root.showPlaylists()
+                    }
                 }
                 Ui.PanelSeparator { foreground: root.foreground }
                 Label { text: "PLAYER"; font.pixelSize: Style.font.caption; opacity: 0.65 }

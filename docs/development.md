@@ -25,8 +25,8 @@ expected under `/usr/lib/qt6/bin`, and shell imports under
 `$OMARCHY_PATH/shell` or `/usr/share/omarchy/shell`.
 
 - Rust tests cover address, metadata, volume and backoff normalization.
-- `tests/test_bridge.py` runs the real executable against local HTTP servers: JSON errors, timeouts, commands, reconnects, cancellation and no replay, plus album filtering, pagination, ordered queue replacement and failed lookups.
-- QML tests exercise display/configuration helpers and the actual service with mocked Quickshell I/O: persistence, pending-command cleanup, volume coalescing, offline controls, startup/restart, album caching, stale scan results and duplicate activation suppression.
+- `tests/test_bridge.py` runs the real executable against local HTTP servers: JSON errors, timeouts, commands, reconnects, cancellation and no replay, plus album filtering, pagination, ordered queue replacement, failed lookups and saved-playlist listing/playback.
+- QML tests exercise display/configuration helpers and the actual service with mocked Quickshell I/O: persistence, pending-command cleanup, volume coalescing, offline controls, startup/restart, album/playlist caching, stale listing results and duplicate activation suppression.
 - `omarchy plugin validate` checks the manifest; `qmllint` checks the production QML against installed Omarchy imports.
 
 The QML mock directory is supplied only to `qmltestrunner`; production lint
@@ -99,6 +99,21 @@ queue replacement require their respective explicit permissions. Live checks
 are deferred from the documentation and focused-test work.
 
 Actual results and remaining gaps are recorded in [validation](validation.md).
+
+## Playlist browser validation
+
+Three focused loopback tests cover listing saved names, playing names with
+spaces/accents/punctuation, empty/failed/malformed listings without disabling
+state polling, duplicate album/playlist activation rejection, and no replay
+after a playlist-start timeout. Three mocked-service tests cover cache/refresh,
+cancelled/stale listings, reconfiguration, old-backend feature detection,
+listing errors and activation cleanup after failure/backend restart.
+
+Run them through the normal `bash scripts/check.sh`; no real player is needed.
+Production lint includes `PlaylistBrowser.qml`, and packaging includes it.
+Real-shell navigation/appearance and one actual saved-playlist start remain
+a later opt-in check. Starting a playlist replaces the queue and requires
+explicit playback permission. No playlist creation/editing is tested or supported.
 
 ## Distribution
 

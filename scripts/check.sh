@@ -15,4 +15,4 @@ ln -s "${OMARCHY_PATH:-/usr/share/omarchy}/shell" "$imports/qs"
 # Shell facades and Style.font expose dynamic QObject members. Suppress only
 # that category, while making syntax/import/type warnings fail the check.
 /usr/lib/qt6/bin/qmllint --max-warnings 0 --missing-property disable \
-  -I "$imports" Service.qml BarWidget.qml ControlPanel.qml AlbumBrowser.qml Oscilloscope.qml
+  -I "$imports" Service.qml BarWidget.qml ControlPanel.qml AlbumBrowser.qml PlaylistBrowser.qml Oscilloscope.qml

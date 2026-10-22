@@ -25,6 +25,9 @@ class Player(ThreadingHTTPServer):
         self.library_calls = []
         self.activations = []
         self.activation_delay = 0
+        self.playlists = []
+        self.playlist_mode = "ok"
+        self.command_started = threading.Event()
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -46,6 +49,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(503)
                 return
             data = b"broken JSON" if player.mode == "json" else json.dumps(player.snapshot).encode()
+        elif path.path == "/api/v1/listplaylists":
+            if player.playlist_mode == "http":
+                self.send_error(503)
+                return
+            data = b"broken JSON" if player.playlist_mode == "json" else json.dumps(player.playlists).encode()
         elif path.path == "/api/v1/browse":
             query = parse_qs(path.query)
             uri = query["uri"][0]
@@ -64,6 +72,7 @@ class Handler(BaseHTTPRequestHandler):
             query = parse_qs(path.query)
             cmd = query["cmd"][0]
             player.calls.append(query)
+            player.command_started.set()
             if player.command_delay:
                 time.sleep(player.command_delay)
             if cmd in ("play", "pause"):
@@ -247,10 +256,65 @@ class Tests(unittest.TestCase):
         self.assertEqual([q["cmd"][0] for q in self.player.calls], ["play", "pause", "prev", "next", "volume"])
         self.assertEqual(self.player.snapshot["volume"], 21)
 
+    def test_lists_and_plays_saved_playlist_names(self):
+        self.player.playlists = ["Quiet evening", "Été & Jazz + 100%? #1"]
+        self.bridge.configure(self.player.address)
+        request_id = self.bridge.send("browse_playlists")
+        listing = self.bridge.wait(lambda e: e.get("id") == request_id)
+        self.assertEqual(listing["type"], "playlists")
+        self.assertTrue(listing["done"])
+        self.assertEqual([item["name"] for item in listing["items"]], self.player.playlists)
+        self.assertEqual(self.player.calls, [])
+        for name in self.player.playlists:
+            request_id = self.bridge.send("play_playlist", name=name)
+            self.assertTrue(self.bridge.wait(lambda e: e.get("id") == request_id)["ok"])
+            self.bridge.wait(lambda e: e["type"] == "state")
+        self.assertEqual(self.player.calls, [{"cmd": ["playplaylist"], "name": [name]}
+                                             for name in self.player.playlists])
+        self.assertEqual(self.player.library_calls, [])
+        self.assertEqual(self.player.activations, [])
+
+    def test_playlist_listing_empty_and_errors_leave_controls_online(self):
+        self.bridge.configure(self.player.address)
+        for mode, playlists in (("ok", []), ("http", []), ("json", []), ("ok", {"error": "Bad list"})):
+            with self.subTest(mode=mode, playlists=playlists):
+                self.player.playlist_mode = mode
+                self.player.playlists = playlists
+                request_id = self.bridge.send("browse_playlists")
+                event = self.bridge.wait(lambda e: e.get("id") == request_id)
+                if mode == "ok" and playlists == []:
+                    self.assertEqual(event["type"], "playlists")
+                    self.assertEqual(event["items"], [])
+                    self.assertTrue(event["done"])
+                else:
+                    self.assertEqual(event["type"], "library_error")
+                    self.assertTrue(event["error"])
+                self.bridge.send("refresh")
+                self.assertTrue(self.bridge.wait(lambda e: e["type"] == "state")["online"])
+                self.assertEqual(self.player.calls, [])
+
+    def test_timed_out_playlist_is_not_replayed_and_blocks_duplicate_activation(self):
+        self.bridge.configure(self.player.address)
+        self.player.command_delay = 4
+        request_id = self.bridge.send("play_playlist", name="Evening")
+        self.assertTrue(self.player.command_started.wait(timeout=2))
+        for op, fields in (("play_playlist", {"name": "Other"}),
+                           ("play_album", {"uri": "albums://Artist/Album"})):
+            duplicate_id = self.bridge.send(op, **fields)
+            self.assertFalse(self.bridge.wait(lambda e: e.get("id") == duplicate_id)["ok"])
+        result = self.bridge.wait(lambda e: e.get("id") == request_id)
+        self.assertFalse(result["ok"])
+        self.assertIn("may have changed", result["error"])
+        self.bridge.wait(lambda e: e["type"] == "state")
+        self.bridge.wait(lambda e: e["type"] == "state")
+        self.assertEqual(self.player.calls, [{"cmd": ["playplaylist"], "name": ["Evening"]}])
+        self.assertEqual(self.player.activations, [])
+
     def test_invalid_requests_and_disabled_volume(self):
         self.player.snapshot["disableVolumeControl"] = True
         self.bridge.configure(self.player.address)
-        for op, fields in [("volume", {"volume": 10}), ("configure", {"address": "file:///tmp/no"}), ("delete", {})]:
+        for op, fields in [("volume", {"volume": 10}), ("configure", {"address": "file:///tmp/no"}),
+                           ("play_playlist", {"name": "../bad"}), ("delete", {})]:
             request_id = self.bridge.send(op, **fields)
             self.assertFalse(self.bridge.wait(lambda e: e.get("id") == request_id)["ok"])
         self.assertEqual(self.player.calls, [])

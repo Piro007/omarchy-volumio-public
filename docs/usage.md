@@ -30,8 +30,7 @@ previous, play/pause, and next buttons and the volume slider. Volume
 adjustment is disabled when Volumio reports fixed output or no numeric volume.
 
 Escape closes the panel. Space/Enter toggles playback and Left/Right adjusts
-volume when the address field is not being edited and the album browser is
-not open.
+volume when the address field is not being edited and neither browser is open.
 
 The backend normally polls two seconds after each successful state response
 and refreshes after commands. Offline retries back off to at most 30 seconds;
@@ -91,6 +90,34 @@ Automated tests cover simulated players and the service. The new hover
 appearance, keyboard behavior and real-player album activation have not been
 independently verified; see [validation results](validation.md).
 
+## Saved playlists
+
+Click **Browse playlists** beside **Browse albums** to see playlists saved
+in Volumio. Click a name or use Up/Down and Enter to start it. Starting a
+playlist **replaces the current queue**. Volumio plays its saved contents;
+the plugin does not filter out NAS, USB, radio or other supported sources.
+Playback still depends on those sources being available on the player.
+
+The list keeps the same quiet styling as the album browser: pointer hover
+does not change its background or border, keyboard focus has a thin outline,
+and the playlist being started is highlighted. Space does nothing in the list.
+**Back** returns to the controls, Escape closes the panel, and **Refresh**
+reloads the saved playlist names. Empty and unavailable lists show a message.
+
+Completed results stay cached until Refresh, backend restart or player
+reconfiguration. Back/close cancels a pending listing. Failed listings do not
+disable working playback controls. Duplicate starts are blocked, and a failed
+or timed-out start is never replayed automatically. Check the player before
+retrying if the error says the queue/playback may have changed.
+
+Names with spaces, accents and punctuation are preserved. This browser lists
+and plays saved playlists; it does not show their tracks or create, edit,
+rename or delete them. After updating, rebuild the installed backend together
+with the QML files. Older backends show a rebuild hint when opening this view.
+Automated tests use simulated players and mocked service I/O; real-shell
+appearance, keyboard handling and real-player playlist playback remain
+unverified in this revision.
+
 ## Troubleshooting
 
 | Problem | What to check |
@@ -112,7 +139,8 @@ omarchy-shell delormous.volumio status
 
 Version 0.1.0 supports one player and the official Omarchy bar. Album browsing
 covers internal storage only, with a 10,000-item limit per album or library
-listing. Queue editing, USB/NAS browsing, library management, multiroom,
+listing; saved-playlist listing also has a 10,000-name limit and a 1 MiB
+response limit. Queue editing, direct USB/NAS browsing, library management, multiroom,
 authentication, and player system settings are outside its scope.
 Multi-monitor behavior and other architectures need further validation.
 Binary archives are architecture/libc-specific; see

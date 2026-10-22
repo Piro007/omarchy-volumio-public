@@ -34,9 +34,18 @@ Item {
     property string albumError: ""
     property int pendingAlbum: -1
     property string activatingAlbum: ""
+    property bool supportsPlaylists: false
+    property alias playlists: playlistModel
+    property int playlistBrowseId: -1
+    property bool playlistsComplete: false
+    property string playlistError: ""
+    property int pendingPlaylist: -1
+    property string activatingPlaylist: ""
     readonly property bool browsing: browseId >= 0
-    readonly property bool busy: pendingCommand >= 0 || pendingAlbum >= 0
+    readonly property bool browsingPlaylists: playlistBrowseId >= 0
+    readonly property bool busy: pendingCommand >= 0 || pendingAlbum >= 0 || pendingPlaylist >= 0
     ListModel { id: albumModel }
+    ListModel { id: playlistModel }
     readonly property string binaryPath: decodeURIComponent(Qt.resolvedUrl("bin/omarchy-volumio").toString().replace(/^file:\/\//, ""))
 
     function send(op, fields) {
@@ -95,8 +104,27 @@ Item {
         browseId = send("browse_albums");
     }
     function cancelBrowse() {
-        if (browsing) send("cancel_browse");
+        if (browsing || browsingPlaylists) send("cancel_browse");
         browseId = -1;
+        playlistBrowseId = -1;
+    }
+    function browsePlaylists(force) {
+        if (!ready || !supportsPlaylists) {
+            playlistError = "Playlist browsing requires the updated backend. Build the installed plugin.";
+            return;
+        }
+        if (!force && (playlistsComplete || browsingPlaylists)) return;
+        cancelBrowse();
+        playlistModel.clear();
+        playlistsComplete = false;
+        playlistError = "";
+        playlistBrowseId = send("browse_playlists");
+    }
+    function playPlaylist(name) {
+        if (!online || busy || !supportsPlaylists) return;
+        playlistError = "";
+        activatingPlaylist = name;
+        pendingPlaylist = send("play_playlist", {name: name});
     }
     function clearLibrary() {
         browseId = -1;
@@ -107,6 +135,12 @@ Item {
             albumError = "Album activation interrupted; check the player before retrying.";
         pendingAlbum = -1;
         activatingAlbum = "";
+        playlistBrowseId = -1;
+        playlistsComplete = false;
+        playlistModel.clear();
+        playlistError = pendingPlaylist >= 0 ? "Playlist activation interrupted; check the player before retrying." : "";
+        pendingPlaylist = -1;
+        activatingPlaylist = "";
     }
     function playAlbum(uri) {
         if (!online || busy || !supportsLibrary) return;
@@ -149,6 +183,7 @@ Item {
                 return;
             }
             supportsLibrary = Array.isArray(event.features) && event.features.indexOf("albums") >= 0;
+            supportsPlaylists = Array.isArray(event.features) && event.features.indexOf("playlists") >= 0;
             ready = true;
             send("configure", {address: savedAddress});
             if (autoStart) configReader.running = true;
@@ -172,6 +207,14 @@ Item {
             for (let i = 0; i < items.length; ++i)
                 albumModel.append({uri: String(items[i].uri), title: String(items[i].title), albumart: String(items[i].albumart || "")});
             if (event.done) { browseId = -1; albumsComplete = true; }
+        } else if (event.type === "playlists" && event.id === playlistBrowseId) {
+            const items = event.items || [];
+            for (let i = 0; i < items.length; ++i)
+                playlistModel.append({name: String(items[i].name)});
+            if (event.done) { playlistBrowseId = -1; playlistsComplete = true; }
+        } else if (event.type === "library_error" && event.id === playlistBrowseId) {
+            playlistBrowseId = -1;
+            playlistError = String(event.error || "Could not load playlists");
         } else if (event.type === "library_error" && event.id === browseId) {
             browseId = -1;
             libraryError = String(event.error || "Could not load albums");
@@ -185,6 +228,13 @@ Item {
             desiredVolume = -1;
             volumeTimer.stop();
         } else if (event.type === "result") {
+            if (event.id === pendingPlaylist) {
+                pendingPlaylist = -1;
+                activatingPlaylist = "";
+                if (!event.ok) playlistError = String(event.error || "Playlist activation failed");
+                refresh();
+                return;
+            }
             if (event.id === pendingAlbum) {
                 pendingAlbum = -1;
                 activatingAlbum = "";
@@ -205,8 +255,10 @@ Item {
     function failed() {
         ready = false; online = false; connecting = false;
         supportsLibrary = false;
+        supportsPlaylists = false;
         clearLibrary();
         libraryError = "Backend unavailable. Reopen the browser after reconnection.";
+        playlistError = "Backend unavailable. Reopen the browser after reconnection.";
         pendingSave = -1; pendingCommand = -1; pendingVolume = -1; desiredVolume = -1;
         volumeTimer.stop();
         startupTimer.stop();

@@ -10,6 +10,36 @@ pub fn valid_album_uri(uri: &str) -> bool {
     uri.starts_with("albums://") && uri.len() > 9 && uri.len() <= 8192
 }
 
+pub fn valid_playlist_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 8192
+        && !matches!(name, "." | "..")
+        && !name.contains('/')
+        && !name.chars().any(char::is_control)
+}
+
+pub async fn browse_playlists(client: Client, base: Url, id: u64, events: Sender<(u64, Value)>) {
+    let result: Result<Vec<Value>, String> = async {
+        let bytes = super::fetch(&client, base.join("api/v1/listplaylists").unwrap()).await?;
+        let names: Vec<String> = serde_json::from_slice(&bytes)
+            .map_err(|e| format!("Invalid playlist response: {e}"))?;
+        if names.len() > MAX_ITEMS {
+            return Err("Playlist listing exceeds the 10,000-item limit".into());
+        }
+        if !names.iter().all(|name| valid_playlist_name(name)) {
+            return Err("Invalid playlist name in player response".into());
+        }
+        let items: Vec<Value> = names.into_iter().map(|name| json!({"name":name})).collect();
+        Ok(items)
+    }
+    .await;
+    let event = match result {
+        Ok(items) => json!({"type":"playlists", "id":id, "items":items, "done":true}),
+        Err(error) => json!({"type":"library_error", "id":id, "error":error}),
+    };
+    let _ = events.send((id, event)).await;
+}
+
 fn internal_track(item: &Value) -> bool {
     let uri = item["uri"].as_str().unwrap_or_default();
     item["service"] == "mpd"

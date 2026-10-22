@@ -19,6 +19,7 @@ struct Request {
     address: Option<String>,
     volume: Option<u8>,
     uri: Option<String>,
+    name: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -130,6 +131,14 @@ fn command_url(base: &Url, request: &Request) -> Result<Url, String> {
         "pause" => "pause",
         "previous" => "prev",
         "next" => "next",
+        "play_playlist"
+            if request
+                .name
+                .as_deref()
+                .is_some_and(library::valid_playlist_name) =>
+        {
+            "playplaylist"
+        }
         "volume" if request.volume.is_some_and(|v| v <= 100) => "volume",
         _ => return Err("Invalid command or volume".into()),
     };
@@ -138,13 +147,25 @@ fn command_url(base: &Url, request: &Request) -> Result<Url, String> {
     if cmd == "volume" {
         url.query_pairs_mut()
             .append_pair("volume", &request.volume.unwrap().to_string());
+    } else if cmd == "playplaylist" {
+        url.query_pairs_mut()
+            .append_pair("name", request.name.as_deref().unwrap());
     }
     Ok(url)
 }
 
 async fn command(client: &Client, base: &Url, request: &Request) -> Result<(), String> {
-    let bytes = fetch(client, command_url(base, request)?).await?;
-    command_ack(&bytes)
+    let url = command_url(base, request)?;
+    let outcome = async {
+        let bytes = fetch(client, url).await?;
+        command_ack(&bytes)
+    }
+    .await;
+    if request.op == "play_playlist" {
+        outcome.map_err(|error| format!("Playlist activation failed; queue/playback may have changed. Check the player before retrying. {error}"))
+    } else {
+        outcome
+    }
 }
 
 fn command_ack(bytes: &[u8]) -> Result<(), String> {
@@ -188,7 +209,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut queue: VecDeque<Request> = VecDeque::new();
     let mut job: Option<JoinHandle<Completed>> = None;
     let mut active_id = None;
-    let mut album_pending = None;
+    let mut activation_pending = None;
     let mut browse_job: Option<JoinHandle<()>> = None;
     let mut browse_id = None;
     let (library_tx, mut library_rx) = tokio::sync::mpsc::channel::<(u64, Value)>(8);
@@ -196,7 +217,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut volume_enabled = false;
     let mut failures = 0;
     let mut next_poll = Instant::now();
-    emit(json!({"type":"ready","protocol":1,"features":["albums"]})).await?;
+    emit(json!({"type":"ready","protocol":1,"features":["albums","playlists"]})).await?;
     loop {
         if job.is_none()
             && let Some(endpoint) = base.clone()
@@ -239,7 +260,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         Ok(url) => {
                             if let Some(task) = browse_job.take() { task.abort(); }
                             browse_id = None;
-                            album_pending = None;
+                            activation_pending = None;
                             if let Some(task) = job.take() { task.abort(); }
                             if let Some(id) = active_id.take() {
                                 emit(json!({"type":"result","id":id,"ok":false,"error":"Address changed; command outcome unknown"})).await?;
@@ -260,21 +281,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(task) = browse_job.take() { task.abort(); }
                     browse_id = None;
                     emit(json!({"type":"result","id":request.id,"ok":true})).await?;
-                } else if request.op == "browse_albums" {
+                } else if matches!(request.op.as_str(), "browse_albums" | "browse_playlists") {
                     if let Some(task) = browse_job.take() { task.abort(); }
                     browse_id = None;
                     if let Some(endpoint) = base.clone() {
                         browse_id = Some(request.id);
-                        browse_job = Some(tokio::spawn(library::browse(client.clone(), endpoint, request.id, library_tx.clone())));
+                        browse_job = Some(if request.op == "browse_playlists" {
+                            tokio::spawn(library::browse_playlists(client.clone(), endpoint, request.id, library_tx.clone()))
+                        } else {
+                            tokio::spawn(library::browse(client.clone(), endpoint, request.id, library_tx.clone()))
+                        });
                     } else {
                         emit(json!({"type":"library_error","id":request.id,"error":"Configure a player first"})).await?;
                     }
-                } else if request.op == "play_album" {
-                    if !online || album_pending.is_some() || queue.len() >= 16
-                        || !request.uri.as_deref().is_some_and(library::valid_album_uri) {
-                        emit(json!({"type":"result","id":request.id,"ok":false,"error":"Player unavailable, album activation busy, or invalid album URI"})).await?;
+                } else if matches!(request.op.as_str(), "play_album" | "play_playlist") {
+                    let valid = if request.op == "play_album" {
+                        request.uri.as_deref().is_some_and(library::valid_album_uri)
                     } else {
-                        album_pending = Some(request.id);
+                        request.name.as_deref().is_some_and(library::valid_playlist_name)
+                    };
+                    if !online || activation_pending.is_some() || queue.len() >= 16 || !valid {
+                        emit(json!({"type":"result","id":request.id,"ok":false,"error":"Player unavailable, library activation busy, or invalid selection"})).await?;
+                    } else {
+                        activation_pending = Some(request.id);
                         queue.push_back(request);
                     }
                 } else if !online || (request.op == "volume" && !volume_enabled) {
@@ -288,8 +317,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             finished = async { job.as_mut().unwrap().await }, if job.is_some() => {
                 job = None; active_id = None;
                 let completed = finished?;
-                let is_album = completed.id.is_some() && completed.id == album_pending;
-                if is_album { album_pending = None; }
+                let is_activation = completed.id.is_some() && completed.id == activation_pending;
+                if is_activation { activation_pending = None; }
                 match completed.result {
                     Ok(Some(snapshot)) => {
                         online = true; volume_enabled = !snapshot.disable_volume_control; failures = 0;
@@ -304,12 +333,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(id) = completed.id {
                             emit(json!({"type":"result","id":id,"ok":false,"error":error})).await?;
                         }
-                        if is_album {
+                        if is_activation {
                             // A library lookup/activation error does not establish player connectivity.
                             next_poll = Instant::now();
                             continue;
                         }
-                        album_pending = None;
+                        activation_pending = None;
                         online = false; failures += 1;
                         let retry = retry_delay(failures);
                         next_poll = Instant::now() + retry;
@@ -381,6 +410,7 @@ mod tests {
             volume: Some(101),
             address: None,
             uri: None,
+            name: None,
         };
         assert!(command_url(&base, &r).is_err());
         r.volume = Some(0);

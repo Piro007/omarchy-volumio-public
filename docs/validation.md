@@ -1,5 +1,35 @@
 # Validation
 
+## Saved playlist browser (2026-10-22)
+
+Source base: `4261099` on `main`. Added the name-only **Browse playlists**
+view, cached/cancellable saved-playlist listing and direct playlist activation.
+Playlist contents and sources are delegated to Volumio. The JSON-lines
+protocol remains v1 with the additive `playlists` feature and requests.
+
+Observed results:
+
+- `bash scripts/check.sh`: passed. Formatting, Clippy, build, 3 Rust tests,
+  14 loopback bridge tests and 27 QML test functions (33 including
+  setup/cleanup), manifest validation and lint for all six production QML files.
+- Three added loopback tests verify saved names and their exact URL encoding,
+  empty/error/malformed listings, state polling after listing failures,
+  duplicate album/playlist starts, and no replay after a playlist timeout.
+- Three added mocked-service tests verify cache/refresh/cancellation,
+  stale results, reconfiguration, old-backend compatibility, listing errors,
+  duplicate starts and activation cleanup without replay after backend failure.
+- Volumio's official REST and playlist-manager source was inspected to confirm
+  the array-of-names listing format and native playlist playback path.
+- Native packaging passed; checksum and archived QML/documentation contents
+  matched the source. The release executable advertised `playlists` and
+  exited cleanly on EOF without contacting a player.
+- Documentation links, shell/Python syntax and `git diff --check` passed.
+
+No installed-copy update, shell restart or real-player commands were run.
+The new list's real-shell appearance/keyboard behavior and actual Volumio
+playlist activation remain unverified. Existing owner reports about album
+browsing do not establish playlist validation.
+
 ## Album tile hover styling (2026-10-22)
 
 Source base: `2eb78dc` on `main`. Album tiles now keep a transparent background

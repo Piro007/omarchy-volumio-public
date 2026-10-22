@@ -1,7 +1,7 @@
 # Omarchy Volumio
 
 Control one Volumio player from the Omarchy bar: playback, volume, metadata,
-cover art, and an internal-storage album browser.
+cover art, internal-storage albums, and saved playlists.
 
 ## Requirements
 
@@ -54,6 +54,8 @@ Use the playback buttons and volume slider. Right-click the bar widget to
 switch between cover art and a decorative oscilloscope. **Browse albums**
 shows internal-storage albums; selecting one **replaces the current queue**
 and starts its internal tracks.
+**Browse playlists** lists playlists saved in Volumio and plays them as saved,
+replacing the current queue.
 
 See the [user guide](docs/usage.md) for keyboard shortcuts, connection
 behavior, limitations, and troubleshooting, and [validation results](docs/validation.md)

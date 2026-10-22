@@ -90,8 +90,8 @@ stdout and diagnostics on stderr. The backend announces
 
 Other transport operations: `pause`, `previous`, `next`.
 
-The ready event additionally advertises `features: ["albums"]`; protocol v1
-remains compatible with the original controls. QML reports a rebuild hint
+The ready event additionally advertises `features: ["albums", "playlists"]`;
+protocol v1 remains compatible with the original controls. QML reports a rebuild hint
 when the installed backend lacks that capability.
 
 Album requests:
@@ -105,8 +105,8 @@ Album requests:
 Browse emits correlated `albums` events with `items` (`uri`, `title`,
 `albumart`) and `done`, or `library_error` with `error`. Cancellation drops
 old events using their request IDs. Album activation emits the normal
-`result`; only one activation may be pending. A bounded channel sends library
-events to the main loop, which alone writes stdout.
+`result`; only one album or playlist activation may be pending. A bounded
+channel sends library events to the main loop, which alone writes stdout.
 
 | Event | Meaning |
 | --- | --- |
@@ -115,8 +115,8 @@ events to the main loop, which alone writes stdout.
 | `connection` | `online: false`, `connecting`, and on failure `error`/`retrySeconds`. |
 | `result` | Request ID, `ok`, optional error; null ID for unreadable requests. |
 
-QML permits one transport command or album activation at a time. Volume
-requests are tracked separately and coalesced with a 150 ms timer and one
+QML permits one transport command, album activation or playlist activation at
+a time. Volume requests are tracked separately and coalesced with a 150 ms timer and one
 pending value. EOF terminates the backend.
 The diagnostic Omarchy IPC target exposes `status`, `refresh`, `configure`,
 `action` and `volume`. Status includes the effective/saved address, bar icon
@@ -151,6 +151,40 @@ an activation; independent browse scanning continues unless cancelled. The
 three-second timeout applies to each HTTP request, not the entire paginated
 activation; there is no overall activation deadline.
 
+## Saved playlist browser
+
+`PlaylistBrowser.qml` is a name-only list inside the existing panel, opened
+from **Browse playlists**. It uses native buttons, theme tokens, quiet hover
+styling and keyboard navigation isolated from transport shortcuts. The
+service owns a separate playlist ListModel and cache. Back/close cancels an
+incomplete listing; reconfiguration/backend failure clears both library caches.
+
+Protocol v1 adds these feature-gated requests without changing album controls:
+
+```json
+{"id":8,"op":"browse_playlists"}
+{"id":9,"op":"play_playlist","name":"Été & Jazz"}
+```
+
+Listing uses `GET /api/v1/listplaylists`, whose response is an array of names.
+It runs in the same cancellable library-task slot as album scanning, without
+blocking state polling. Success emits `playlists` with the request `id`,
+`items` containing `name`, and `done: true`; failures emit `library_error`.
+`cancel_browse` cancels either kind of listing. Stale events are ignored using
+request IDs. An empty array completes normally. The existing timeout, 1 MiB
+response limit and a 10,000-name limit apply. Names are nonempty, at most
+8,192 UTF-8 bytes, and cannot be dot entries or contain slashes/control characters.
+
+Activation sends one `GET /api/v1/commands/?cmd=playplaylist&name=…`, using URL
+query encoding to preserve the exact saved name. Volumio resolves the playlist,
+replaces the queue and plays its saved sources; the plugin does not inspect or
+apply the album browser's internal-storage filter to its tracks. Activation
+shares the transport task and duplicate-start guard with albums. The normal
+`result` event completes it and schedules state refresh. Errors report that
+queue/playback may have changed, never replay the request and do not by
+themselves establish that the player is offline. QML reports a rebuild hint
+if an older backend does not advertise the `playlists` feature.
+
 ## References
 
 - [Official Omarchy plugin guide](https://plugins.omarchy.org/develop.html)
@@ -158,5 +192,6 @@ activation; there is no overall activation deadline.
 - Installed shell README, `Ui` components and clock/audio/media plugins under `/usr/share/omarchy/shell`.
 
 No host or player system files are modified. Scope is one player and the
-official bar. Album browsing/playback covers internal storage only; queue
-editing, library management and authentication are excluded.
+official bar. Album browsing/playback covers internal storage only; saved
+playlists play their original sources. Queue editing, playlist editing,
+library management and authentication are excluded.
