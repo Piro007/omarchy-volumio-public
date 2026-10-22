@@ -41,7 +41,8 @@ injection, matching the address behaviour.
 
 Cover mode loads `snapshot.albumart` asynchronously into a square thumbnail
 with a small source size and falls back to the music glyph when the URL is
-empty, fails or the player is offline. Scope mode runs a Canvas at about
+empty or fails. Previously loaded artwork remains visible but dimmed when
+the player disconnects or the backend stops. Scope mode runs a Canvas at about
 30 fps only while playing; pause stops the timer and keeps the last frame,
 while stop or disconnect paints a flat line. Each of the sine, sawtooth,
 square and triangle shapes is held for 2.6 seconds and blended into the next
@@ -56,8 +57,11 @@ Tokio handles stdin, timers and one state/transport HTTP task at a time.
 A separate cancellable library task makes sequential browse requests so
 loading the grid does not block state polling or transport commands. Reqwest/rustls makes
 direct requests with a three-second timeout and a 1 MiB response limit.
-Redirects and proxy use are disabled. `GET /api/v1/getState` runs every two
-seconds and after commands; polling avoids a Socket.IO dependency for this MVP.
+Redirects and proxy use are disabled for backend requests. After a successful
+state response, `GET /api/v1/getState` is scheduled two seconds later; commands
+schedule an immediate refresh. Active transport/album tasks delay polling,
+and connection failures apply the backoff below. Polling avoids a Socket.IO
+dependency for this MVP. Artwork is loaded separately by QML.
 
 Commands use `/api/v1/commands/?cmd=…`: `play`, `pause`, `prev`, `next` and
 `volume`. HTTP acknowledgement alone does not prove a playback change;
@@ -111,8 +115,9 @@ events to the main loop, which alone writes stdout.
 | `connection` | `online: false`, `connecting`, and on failure `error`/`retrySeconds`. |
 | `result` | Request ID, `ok`, optional error; null ID for unreadable requests. |
 
-QML permits one transport command at a time and coalesces volume changes
-with a 150 ms timer and one pending value. EOF terminates the backend.
+QML permits one transport command or album activation at a time. Volume
+requests are tracked separately and coalesced with a 150 ms timer and one
+pending value. EOF terminates the backend.
 The diagnostic Omarchy IPC target exposes `status`, `refresh`, `configure`,
 `action` and `volume`. Status includes the effective/saved address, bar icon
 mode, process ID, panel-open flag, state and last command/startup error.
@@ -142,7 +147,9 @@ payloads over 8 MiB are rejected before submission. It never clears the queue
 as a separate operation. Errors after submission report possible queue/playback
 changes, are never retried, and trigger a state refresh. Library errors do not
 assert that the player is offline. State/transport requests serialize behind
-an activation; independent browse scanning continues unless cancelled.
+an activation; independent browse scanning continues unless cancelled. The
+three-second timeout applies to each HTTP request, not the entire paginated
+activation; there is no overall activation deadline.
 
 ## References
 

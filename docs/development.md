@@ -25,8 +25,8 @@ expected under `/usr/lib/qt6/bin`, and shell imports under
 `$OMARCHY_PATH/shell` or `/usr/share/omarchy/shell`.
 
 - Rust tests cover address, metadata, volume and backoff normalization.
-- `tests/test_bridge.py` runs the real executable against local HTTP servers: JSON errors, timeouts, commands, reconnects, cancellation and no replay.
-- QML tests exercise display/configuration helpers and the actual service with mocked Quickshell I/O: persistence, pending-command cleanup, volume coalescing, offline controls, startup failure and restart scheduling.
+- `tests/test_bridge.py` runs the real executable against local HTTP servers: JSON errors, timeouts, commands, reconnects, cancellation and no replay, plus album filtering, pagination, ordered queue replacement and failed lookups.
+- QML tests exercise display/configuration helpers and the actual service with mocked Quickshell I/O: persistence, pending-command cleanup, volume coalescing, offline controls, startup/restart, album caching, stale scan results and duplicate activation suppression.
 - `omarchy plugin validate` checks the manifest; `qmllint` checks the production QML against installed Omarchy imports.
 
 The QML mock directory is supplied only to `qmltestrunner`; production lint
@@ -51,8 +51,10 @@ The shell test changes the plugin address temporarily, reloads plugins,
 terminates only its backend, exercises network recovery against a loopback
 server, disables/re-enables the plugin in its original bar position, and restores
 the original effective address. It must run in the graphical session and
-requires configuration/process-control permission. It does not command
-playback. The read-only player test compares API metadata and artwork without commands.
+requires configuration/process-control permission. It restores the address and
+bar position, but does not restore the icon mode after disable/re-enable; save
+and restore that mode separately. It does not command playback. The read-only
+player test compares API metadata and artwork without commands.
 The playback test briefly plays/pauses and lowers volume by one
 point, then attempts restoration in `finally`; avoid it while someone is
 listening. Do not change player system settings.
@@ -77,28 +79,26 @@ reload/restart, and restore the address and icon mode after any
 disable/re-enable test. A rescan can retain cached QML on the tested version;
 restart the shell after source updates.
 
-## Album browser: separate validation step
+## Album browser validation
 
-The feature has only compilation/static checks so far. Do not interpret the
-older control-plugin test results as album-browser validation. No live queue
-or playback request was sent while implementing it.
+The default suite includes focused album checks using the existing loopback
+server and mocked service I/O. It covers:
 
-In the next, explicitly authorized testing step, cover:
+- Paged album listings with internal-only, NAS/USB-only and mixed-source albums.
+- Complete paged track resolution before one queue replacement, with only
+  internal tracks in their returned order.
+- Failed or empty lookups without queue changes, and no activation replay
+  after an HTTP timeout, including the uncertain-outcome error.
+- Progressive service results, completed-cache reuse/refresh, cancellation
+  ignoring stale results, and suppression of duplicate activation clicks.
 
-- Paged albums and tracks; internal-only, NAS/USB-only and mixed-source albums;
-  identical titles with distinct URIs; empty libraries and missing artwork.
-- Progressive results, cache/refresh, Back/Escape, small screens, keyboard
-  focus and Enter activation without leaking play/pause shortcuts.
-- All internal tracks resolved before one `replaceAndPlay` request, correct
-  order/index, duplicate activation suppression and no automatic replay after
-  timeouts. Failed lookups must leave the queue untouched.
-- Scan cancellation/stale responses after close, address changes and backend
-  restart; library errors must not disable working controls.
-- Package inclusion of `AlbumBrowser.qml` and unchanged existing controls.
+These tests do not render the album grid or verify Volumio's server-side
+queue semantics. A later live check can cover Back/Escape, keyboard focus,
+small screens, artwork and one real album activation. Desktop changes and
+queue replacement require their respective explicit permissions. Live checks
+are deferred from the documentation and focused-test work.
 
-Run targeted automated tests first, then a visual check and one real album
-activation only with permission to replace the queue. Compilation does not
-verify server-side playback semantics.
+Actual results and remaining gaps are recorded in [validation](validation.md).
 
 ## Distribution
 
@@ -109,14 +109,17 @@ documentation. Regenerate it after source changes before distribution.
 
 On a compatible Omarchy machine, verify the checksum with
 `sha256sum -c <archive>.tar.gz.sha256` from the directory containing both files.
-Extract the archive into a new
+Create a new, empty
 `~/.config/omarchy/plugins/delormous.volumio/` directory using
+`mkdir -p "$HOME/.config/omarchy/plugins/delormous.volumio"`, then extract with
 `tar -xzf <archive>.tar.gz --strip-components=1 -C <plugin-directory>`.
-Do not overwrite an existing installation. Then run:
+Do not overwrite an existing installation. Discover the plugin, then restart
+the shell before enabling it, as with the source installation:
 
 ```sh
 omarchy plugin validate "$HOME/.config/omarchy/plugins/delormous.volumio"
 omarchy-shell shell rescanPlugins
+omarchy restart shell
 omarchy plugin enable delormous.volumio
 ```
 

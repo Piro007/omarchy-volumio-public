@@ -174,6 +174,70 @@ TestCase {
         compare(Harness.requests.length, 1);
         compare(service.snapshot.status, "pause");
     }
+    function libraryOnline() {
+        deliver({type: "ready", protocol: 1, features: ["albums"]});
+        deliver({type: "state", state: {status: "pause", volume: 20, disableVolumeControl: false}});
+    }
+    function test_completed_album_scan_is_cached_until_refresh() {
+        libraryOnline();
+        service.browseAlbums(false);
+        var id = service.browseId;
+        deliver({type: "albums", id: id, items: [{uri: "albums://Artist/Album", title: "Album"}], done: false});
+        compare(service.albums.count, 1);
+        verify(service.browsing);
+        deliver({type: "albums", id: id, items: [], done: true});
+        verify(service.albumsComplete);
+        verify(!service.browsing);
+        var count = Harness.requests.length;
+        service.cancelBrowse();
+        service.browseAlbums(false);
+        compare(Harness.requests.length, count);
+        compare(service.albums.count, 1);
+        service.browseAlbums(true);
+        compare(Harness.requests.length, count + 1);
+        compare(Harness.requests[count].op, "browse_albums");
+        compare(service.albums.count, 0);
+        verify(!service.albumsComplete);
+        verify(service.browseId !== id);
+    }
+    function test_cancelled_album_scan_ignores_stale_events() {
+        libraryOnline();
+        service.browseAlbums(false);
+        var oldId = service.browseId;
+        service.cancelBrowse();
+        compare(Harness.requests[Harness.requests.length - 1].op, "cancel_browse");
+        deliver({type: "albums", id: oldId, items: [{uri: "albums://Old/Album", title: "Old"}], done: true});
+        compare(service.albums.count, 0);
+        verify(!service.albumsComplete);
+        service.browseAlbums(false);
+        var newId = service.browseId;
+        deliver({type: "library_error", id: oldId, error: "Stale failure"});
+        compare(service.libraryError, "");
+        compare(service.browseId, newId);
+        deliver({type: "albums", id: newId, items: [{uri: "albums://New/Album", title: "New"}], done: true});
+        compare(service.albums.count, 1);
+        compare(service.albums.get(0).title, "New");
+        verify(service.albumsComplete);
+    }
+    function test_album_activation_blocks_duplicates_and_does_not_retry_failure() {
+        libraryOnline();
+        service.playAlbum("albums://Artist/Album");
+        var id = service.pendingAlbum;
+        verify(service.busy);
+        compare(service.activatingAlbum, "albums://Artist/Album");
+        var count = Harness.requests.length;
+        service.playAlbum("albums://Other/Album");
+        compare(Harness.requests.length, count);
+        deliver({type: "result", id: id, ok: false, error: "Queue may have changed"});
+        verify(!service.busy);
+        compare(service.activatingAlbum, "");
+        compare(service.albumError, "Queue may have changed");
+        verify(service.online);
+        compare(Harness.requests.length, count + 1);
+        compare(Harness.requests[count].op, "refresh");
+        deliver({type: "state", state: {status: "play", volume: 20}});
+        compare(Harness.requests.length, count + 1);
+    }
     function test_missing_backend_reports_failure() {
         service.startBackend();
         compare(Harness.starts, 1);

@@ -1,6 +1,61 @@
-# MVP validation
+# Validation
 
-## Bar icon modes (2026-10-22)
+## Album tile hover styling (2026-10-22)
+
+Source base: `2eb78dc` on `main`. Album tiles now keep a transparent background
+and no border on pointer hover. A one-pixel theme-colored outline marks the
+focused grid tile, and the existing starting-album highlight remains.
+This uses the native button's public color and border properties; playback,
+tooltips and pointer handling are unchanged.
+
+Observed: `bash scripts/check.sh` passed (3 Rust tests, 11 loopback tests,
+24 QML test functions, manifest validation and production QML lint).
+`git diff --check` passed. No tests were added for this styling-only change.
+
+Owner-reported: the plugin and album browsing work in real use. The updated
+hover appearance has not been checked in the real shell. No deployment,
+shell restart or live player control was performed during this change.
+
+## Focused album tests and documentation (2026-10-22)
+
+Source base: `d2e7aea` on `main`. This pass changes tests and documentation
+only; no production-code fixes were needed for the added test cases.
+
+Observed results:
+
+- `bash scripts/check.sh`: passed. Formatting, Clippy, build, 3 Rust unit
+  tests, 11 loopback bridge tests, 24 QML test functions (30 including
+  setup/cleanup), official manifest validation and lint for all five
+  production QML files passed.
+- Four added bridge tests exercise the real backend against a simulated
+  player: paged album filtering (internal, NAS/USB and mixed sources),
+  complete track resolution before one ordered internal-only queue payload,
+  failed/empty lookups without playback requests, and activation timeout
+  without replay over the following state refresh and polling cycle.
+- Three added mocked-service tests cover progressive results, completed-cache
+  reuse/refresh, cancellation ignoring stale events, duplicate activation
+  suppression and failed activation requesting state refresh without replay.
+- The README now separates installation, building the installed copy, shell
+  restart and enablement. Detailed behavior and troubleshooting moved to the
+  [user guide](usage.md). Documentation was checked against the implementation
+  and installed Omarchy commands, including the immediate-enable prompt,
+  offline artwork, polling exceptions and proxy-free backend requests.
+
+The HTTP fixture records submitted queue payloads; it does not implement or
+validate Volumio's actual queue behavior. The QML harness exercises the
+service, not the album grid's visual layout or keyboard handling. No live
+desktop/player tests, installation, shell restart or package rebuild were
+performed. Real-player album activation and real-shell browser/icon behavior
+remain unverified. Existing generated archives were not refreshed by this pass.
+
+## Historical results
+
+The sections below record earlier revisions and their validation scope.
+Their statements about pending tests, installations and archives apply to
+those revisions; the current results above supersede only the checks they
+explicitly cover. Owner-reported results remain distinct from observed tests.
+
+### Bar icon modes (2026-10-22)
 
 Implemented on `feat/album-browser`: the bar entry is now icon-only, showing
 album cover art or an oscilloscope, switched by right click and persisted as
@@ -28,7 +83,7 @@ Not verified:
   multi-monitor synchronisation, vertical bars and idle CPU cost.
 - Installation, shell restarts and live player requests were not performed.
 
-## Album browser implementation (2026-10-22)
+### Album browser implementation (2026-10-22)
 
 The album-grid/click-to-play feature is implemented on `feat/album-browser`.
 Only Rust compilation, QML static analysis and manifest validation are in
@@ -55,7 +110,7 @@ are explicitly **unverified** until the separate test step.
 Implementation details and the later validation scenarios are recorded in
 [architecture](architecture.md) and [development](development.md).
 
-## Results through final validation (2026-10-21)
+### Results through final validation (2026-10-21)
 
 Environment: Omarchy 4.0.6, Qt 6.12.0, Rust 1.99.1, x86_64 Linux.
 
@@ -75,7 +130,7 @@ Environment: Omarchy 4.0.6, Qt 6.12.0, Rust 1.99.1, x86_64 Linux.
 Generated artifacts are ignored by Git. No history rewrite, push, release
 publication or repository-visibility change was performed.
 
-## Final live validation
+### Final live validation
 
 After the desktop was unlocked, live testing exposed a real reload bug:
 Omarchy's detached configuration snapshot and recreated widget settings
@@ -106,7 +161,7 @@ check and one final manifest validation were run for these final fixes.
 Rust/backend and build/distribution results above come from earlier checks;
 those components were not changed or retested during finalization.
 
-## Prior manual evidence and remaining limits
+### Prior manual evidence and remaining limits
 
 The owner reports successful compilation, installation, playback, metadata
 and volume on two Omarchy computers. Earlier development also exercised
@@ -124,7 +179,7 @@ ready for an initial public preview with these limitations. Nothing was
 published and repository visibility was not changed.
 
 
-## Public README and installation cleanup
+### Public README and installation cleanup
 
 The optional `scripts/install.sh` wrapper was removed after the validation
 above. Installation now uses the official add, build-installed-copy and

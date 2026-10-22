@@ -121,6 +121,9 @@ FocusScope {
             fontFamily: root.fontFamily
             hasCursor: grid.activeFocus && grid.currentIndex === index
             selected: root.service && root.service.activatingAlbum === uri
+            // Keep covers steady under the pointer; outline the grid's focus only.
+            color: selected ? Style.selectedFillFor(foreground, accent) : "transparent"
+            borderSpec: hasCursor ? Border.withWidth(Border.controlSpec("focus", foreground, accent), 1) : Border.none()
             enabled: root.service && root.service.online && root.service.supportsLibrary && !root.service.busy
             opacity: enabled ? 1 : 0.55
             tooltipText: title

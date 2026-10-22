@@ -20,6 +20,11 @@ class Player(ThreadingHTTPServer):
         self.mode = "ok"
         self.calls = []
         self.command_delay = 0
+        self.library = {}
+        self.library_failures = set()
+        self.library_calls = []
+        self.activations = []
+        self.activation_delay = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -41,6 +46,20 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_error(503)
                 return
             data = b"broken JSON" if player.mode == "json" else json.dumps(player.snapshot).encode()
+        elif path.path == "/api/v1/browse":
+            query = parse_qs(path.query)
+            uri = query["uri"][0]
+            offset = int(query["offset"][0])
+            player.library_calls.append((uri, offset))
+            if (uri, offset) in player.library_failures:
+                self.send_error(503)
+                return
+            items = player.library.get(uri, [])
+            # Return small pages with a total count to exercise pagination.
+            limit = min(2, int(query["limit"][0]))
+            data = json.dumps({"navigation": {"lists": [{
+                "items": items[offset:offset + limit], "count": len(items)
+            }]}}).encode()
         else:
             query = parse_qs(path.query)
             cmd = query["cmd"][0]
@@ -52,6 +71,21 @@ class Handler(BaseHTTPRequestHandler):
             if cmd == "volume":
                 player.snapshot["volume"] = int(query["volume"][0])
             data = b'{}'
+        self.respond(data)
+
+    def do_POST(self):
+        if self.path != "/api/v1/replaceAndPlay":
+            self.send_error(404)
+            return
+        player = self.server
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        # Capture the lookups already completed when the queue change arrives.
+        player.activations.append((body, list(player.library_calls)))
+        if player.activation_delay:
+            time.sleep(player.activation_delay)
+        self.respond(b'{}')
+
+    def respond(self, data):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(data)))
@@ -118,6 +152,89 @@ class Tests(unittest.TestCase):
         self.addCleanup(self.player.server_close)
         self.addCleanup(self.player.shutdown)
         self.addCleanup(self.bridge.close)
+
+    @staticmethod
+    def track(storage, name):
+        return {"uri": "music-library/%s/%s.flac" % (storage, name),
+                "service": "mpd", "type": "song", "title": name}
+
+    def test_browse_paged_internal_and_mixed_albums(self):
+        uris = ["albums://Artist/" + name for name in ("Internal", "NAS", "USB", "Mixed")]
+        self.player.library = {
+            "albums://": [{"uri": uri, "service": "mpd", "title": "Same title",
+                            "albumart": "/albumart?album=" + str(i)}
+                           for i, uri in enumerate(uris)],
+            uris[0]: [self.track("INTERNAL", "one")],
+            uris[1]: [self.track("NAS", "two")],
+            uris[2]: [self.track("USB", "three")],
+            uris[3]: [self.track("NAS", "four"), self.track("USB", "five"),
+                      self.track("INTERNAL", "six")],
+        }
+        self.bridge.configure(self.player.address)
+        request_id = self.bridge.send("browse_albums")
+        albums = []
+        while True:
+            event = self.bridge.wait(lambda e: e.get("id") == request_id)
+            self.assertEqual(event["type"], "albums", event)
+            albums.extend(event["items"])
+            if event["done"]:
+                break
+        self.assertEqual([item["uri"] for item in albums], [uris[0], uris[3]])
+        self.assertEqual(albums[0]["albumart"], self.player.address + "/albumart?album=0")
+        self.assertIn(("albums://", 2), self.player.library_calls)
+        self.assertIn((uris[3], 2), self.player.library_calls)
+        self.assertEqual(self.player.activations, [])
+        self.assertEqual(self.player.calls, [])
+
+    def test_album_activation_resolves_all_pages_before_one_queue_change(self):
+        uri = "albums://Artist/Mixed"
+        first = self.track("INTERNAL", "third")
+        second = self.track("INTERNAL", "first")
+        second["type"] = "track"
+        last = self.track("INTERNAL", "second")
+        self.player.library[uri] = [first, self.track("NAS", "external"), second,
+                                    self.track("USB", "external"), last]
+        self.bridge.configure(self.player.address)
+        request_id = self.bridge.send("play_album", uri=uri)
+        self.assertTrue(self.bridge.wait(lambda e: e.get("id") == request_id)["ok"])
+        self.assertEqual(self.player.activations, [(
+            {"item": first, "list": [first, second, last], "index": 0},
+            [(uri, 0), (uri, 2), (uri, 4)],
+        )])
+        self.assertEqual(self.player.calls, [])  # No separate clear/play command.
+
+    def test_failed_album_lookup_does_not_change_queue(self):
+        uri = "albums://Artist/Album"
+        self.bridge.configure(self.player.address)
+        for scenario in ("later page fails", "no internal tracks"):
+            with self.subTest(scenario=scenario):
+                self.player.library[uri] = [self.track("INTERNAL", "one"),
+                                            self.track("NAS", "two"),
+                                            self.track("INTERNAL", "three")]
+                self.player.library_failures = {(uri, 2)}
+                if scenario == "no internal tracks":
+                    self.player.library[uri] = [self.track("USB", "external")]
+                    self.player.library_failures = set()
+                request_id = self.bridge.send("play_album", uri=uri)
+                self.assertFalse(self.bridge.wait(lambda e: e.get("id") == request_id)["ok"])
+                self.bridge.wait(lambda e: e["type"] == "state")
+                self.assertEqual(self.player.activations, [])
+                self.assertEqual(self.player.calls, [])
+
+    def test_timed_out_album_activation_is_not_replayed(self):
+        uri = "albums://Artist/Album"
+        self.player.library[uri] = [self.track("INTERNAL", "one")]
+        self.player.activation_delay = 4
+        self.bridge.configure(self.player.address)
+        request_id = self.bridge.send("play_album", uri=uri)
+        result = self.bridge.wait(lambda e: e.get("id") == request_id)
+        self.assertFalse(result["ok"])
+        self.assertIn("may have changed", result["error"])
+        self.bridge.wait(lambda e: e["type"] == "state")
+        self.bridge.wait(lambda e: e["type"] == "state")  # One further polling cycle.
+        self.assertEqual(len(self.player.activations), 1)
+        self.assertEqual(self.player.library_calls, [(uri, 0)])
+        self.assertEqual(self.player.calls, [])
 
     def test_metadata_and_commands(self):
         event = self.bridge.configure(self.player.address)
