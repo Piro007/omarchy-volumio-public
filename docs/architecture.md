@@ -24,9 +24,37 @@ clears pending commands and schedules one restart after three seconds.
 A five-second startup watchdog reports a missing/nonresponsive executable.
 Reconnection never replays pending playback or volume requests.
 
+## Bar icon modes
+
+The bar entry is icon-only: `WidgetButton` hides its label and draws either
+the current cover art or a small oscilloscope. Left click opens the panel;
+right click calls the service's `toggleIconMode()`. The tooltip still exposes
+the track title, artist and album.
+
+The service owns the mode (`iconMode`, `savedIconMode`), so every monitor's
+widget follows one value. `updateEntryInline` replaces the widget's layout
+entry rather than merging it, so both the address save and the mode save send
+`address` and `barIcon` together. The mode is restored from `shell.barConfig`
+and the `listShellConfig` refresh; external changes made with
+`omarchy bar set` are forwarded from widget settings after the first
+injection, matching the address behaviour.
+
+Cover mode loads `snapshot.albumart` asynchronously into a square thumbnail
+with a small source size and falls back to the music glyph when the URL is
+empty, fails or the player is offline. Scope mode runs a Canvas at about
+30 fps only while playing; pause stops the timer and keeps the last frame,
+while stop or disconnect paints a flat line. Each of the sine, sawtooth,
+square and triangle shapes is held for 2.6 seconds and blended into the next
+over 1.4 seconds with smoothstep easing. The animation is deliberately
+synthetic: `getState` exposes no audio levels, so it follows `status` rather
+than sound. No backend or protocol change is involved. The slot swaps width
+and height on vertical bars.
+
 ## Rust backend
 
-Tokio handles stdin, timers and one HTTP task at a time. Reqwest/rustls makes
+Tokio handles stdin, timers and one state/transport HTTP task at a time.
+A separate cancellable library task makes sequential browse requests so
+loading the grid does not block state polling or transport commands. Reqwest/rustls makes
 direct requests with a three-second timeout and a 1 MiB response limit.
 Redirects and proxy use are disabled. `GET /api/v1/getState` runs every two
 seconds and after commands; polling avoids a Socket.IO dependency for this MVP.
@@ -56,7 +84,25 @@ stdout and diagnostics on stderr. The backend announces
 {"id":4,"op":"refresh"}
 ```
 
-Other operations: `pause`, `previous`, `next`.
+Other transport operations: `pause`, `previous`, `next`.
+
+The ready event additionally advertises `features: ["albums"]`; protocol v1
+remains compatible with the original controls. QML reports a rebuild hint
+when the installed backend lacks that capability.
+
+Album requests:
+
+```json
+{"id":5,"op":"browse_albums"}
+{"id":6,"op":"cancel_browse"}
+{"id":7,"op":"play_album","uri":"albums://Artist/Album"}
+```
+
+Browse emits correlated `albums` events with `items` (`uri`, `title`,
+`albumart`) and `done`, or `library_error` with `error`. Cancellation drops
+old events using their request IDs. Album activation emits the normal
+`result`; only one activation may be pending. A bounded channel sends library
+events to the main loop, which alone writes stdout.
 
 | Event | Meaning |
 | --- | --- |
@@ -68,8 +114,35 @@ Other operations: `pause`, `previous`, `next`.
 QML permits one transport command at a time and coalesces volume changes
 with a 150 ms timer and one pending value. EOF terminates the backend.
 The diagnostic Omarchy IPC target exposes `status`, `refresh`, `configure`,
-`action` and `volume`. Status includes the effective/saved address, process
-ID, panel-open flag, state and last command/startup error.
+`action` and `volume`. Status includes the effective/saved address, bar icon
+mode, process ID, panel-open flag, state and last command/startup error.
+
+## Album browser
+
+`AlbumBrowser.qml` lives inside the existing panel, using a virtualized
+three-column grid, asynchronous thumbnails and native button/theme states.
+Browser keyboard handling is isolated from the control panel shortcuts.
+The service owns a ListModel and caches complete results in memory. Back or
+close cancels a partial scan; reopening an incomplete scan starts again.
+Player reconfiguration/backend failure clears the cache and pending requests.
+
+The backend pages `GET /api/v1/browse?uri=albums://` in groups of 100. Each
+candidate album is browsed until an MPD song/track URI under
+`music-library/INTERNAL/` is found or the album is exhausted. Artwork URLs
+never determine storage membership. Album identity is the opaque URI, not
+the title. Listings are bounded to 10,000 items; repeated URIs or incomplete
+pages report an error instead of looping. Existing per-request timeout and
+1 MiB response limits apply. Only one scan runs at a time.
+
+On a cover activation, the transport task resolves all album pages before
+changing playback. Internal tracks retain Volumio's returned order. An empty
+or failed lookup sends no playback mutation. The backend sends one
+`POST /api/v1/replaceAndPlay` containing `list`, its first `item`, and `index: 0`;
+payloads over 8 MiB are rejected before submission. It never clears the queue
+as a separate operation. Errors after submission report possible queue/playback
+changes, are never retried, and trigger a state refresh. Library errors do not
+assert that the player is offline. State/transport requests serialize behind
+an activation; independent browse scanning continues unless cancelled.
 
 ## References
 
@@ -78,4 +151,5 @@ ID, panel-open flag, state and last command/startup error.
 - Installed shell README, `Ui` components and clock/audio/media plugins under `/usr/share/omarchy/shell`.
 
 No host or player system files are modified. Scope is one player and the
-official bar; queue management, library browsing and authentication are excluded.
+official bar. Album browsing/playback covers internal storage only; queue
+editing, library management and authentication are excluded.

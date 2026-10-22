@@ -1,3 +1,5 @@
+mod library;
+
 use reqwest::{Client, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -16,6 +18,7 @@ struct Request {
     op: String,
     address: Option<String>,
     volume: Option<u8>,
+    uri: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,13 +95,17 @@ fn state(value: Value, base: &Url) -> Result<State, String> {
 }
 
 async fn fetch(client: &Client, url: Url) -> Result<Vec<u8>, String> {
-    let mut response = client
+    let response = client
         .get(url)
         .send()
         .await
         .map_err(|e| e.to_string())?
         .error_for_status()
         .map_err(|e| e.to_string())?;
+    response_bytes(response).await
+}
+
+async fn response_bytes(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         if bytes.len() + chunk.len() > 1_048_576 {
@@ -137,8 +144,12 @@ fn command_url(base: &Url, request: &Request) -> Result<Url, String> {
 
 async fn command(client: &Client, base: &Url, request: &Request) -> Result<(), String> {
     let bytes = fetch(client, command_url(base, request)?).await?;
+    command_ack(&bytes)
+}
+
+fn command_ack(bytes: &[u8]) -> Result<(), String> {
     // Some Volumio versions acknowledge commands with an empty or text body.
-    if let Ok(v) = serde_json::from_slice::<Value>(&bytes)
+    if let Ok(v) = serde_json::from_slice::<Value>(bytes)
         && (v.get("error").is_some_and(|e| !e.is_null() && e != false)
             || v.get("success") == Some(&Value::Bool(false)))
     {
@@ -177,11 +188,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut queue: VecDeque<Request> = VecDeque::new();
     let mut job: Option<JoinHandle<Completed>> = None;
     let mut active_id = None;
+    let mut album_pending = None;
+    let mut browse_job: Option<JoinHandle<()>> = None;
+    let mut browse_id = None;
+    let (library_tx, mut library_rx) = tokio::sync::mpsc::channel::<(u64, Value)>(8);
     let mut online = false;
     let mut volume_enabled = false;
     let mut failures = 0;
     let mut next_poll = Instant::now();
-    emit(json!({"type":"ready","protocol":1})).await?;
+    emit(json!({"type":"ready","protocol":1,"features":["albums"]})).await?;
     loop {
         if job.is_none()
             && let Some(endpoint) = base.clone()
@@ -192,7 +207,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 job = Some(tokio::spawn(async move {
                     Completed {
                         id: Some(request.id),
-                        result: command(&http, &endpoint, &request).await.map(|()| None),
+                        result: if request.op == "play_album" {
+                            library::play_album(&http, &endpoint, request.uri.as_deref().unwrap())
+                                .await
+                                .map(|()| None)
+                        } else {
+                            command(&http, &endpoint, &request).await.map(|()| None)
+                        },
                     }
                 }));
             } else if Instant::now() >= next_poll {
@@ -216,6 +237,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 if request.op == "configure" {
                     match address(request.address.as_deref().unwrap_or("")) {
                         Ok(url) => {
+                            if let Some(task) = browse_job.take() { task.abort(); }
+                            browse_id = None;
+                            album_pending = None;
                             if let Some(task) = job.take() { task.abort(); }
                             if let Some(id) = active_id.take() {
                                 emit(json!({"type":"result","id":id,"ok":false,"error":"Address changed; command outcome unknown"})).await?;
@@ -232,6 +256,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else if request.op == "refresh" {
                     next_poll = Instant::now();
                     emit(json!({"type":"result","id":request.id,"ok":true})).await?;
+                } else if request.op == "cancel_browse" {
+                    if let Some(task) = browse_job.take() { task.abort(); }
+                    browse_id = None;
+                    emit(json!({"type":"result","id":request.id,"ok":true})).await?;
+                } else if request.op == "browse_albums" {
+                    if let Some(task) = browse_job.take() { task.abort(); }
+                    browse_id = None;
+                    if let Some(endpoint) = base.clone() {
+                        browse_id = Some(request.id);
+                        browse_job = Some(tokio::spawn(library::browse(client.clone(), endpoint, request.id, library_tx.clone())));
+                    } else {
+                        emit(json!({"type":"library_error","id":request.id,"error":"Configure a player first"})).await?;
+                    }
+                } else if request.op == "play_album" {
+                    if !online || album_pending.is_some() || queue.len() >= 16
+                        || !request.uri.as_deref().is_some_and(library::valid_album_uri) {
+                        emit(json!({"type":"result","id":request.id,"ok":false,"error":"Player unavailable, album activation busy, or invalid album URI"})).await?;
+                    } else {
+                        album_pending = Some(request.id);
+                        queue.push_back(request);
+                    }
                 } else if !online || (request.op == "volume" && !volume_enabled) {
                     emit(json!({"type":"result","id":request.id,"ok":false,"error":"Player unreachable or control unavailable"})).await?;
                 } else if let Err(error) = command_url(base.as_ref().unwrap(), &request) {
@@ -243,6 +288,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             finished = async { job.as_mut().unwrap().await }, if job.is_some() => {
                 job = None; active_id = None;
                 let completed = finished?;
+                let is_album = completed.id.is_some() && completed.id == album_pending;
+                if is_album { album_pending = None; }
                 match completed.result {
                     Ok(Some(snapshot)) => {
                         online = true; volume_enabled = !snapshot.disable_volume_control; failures = 0;
@@ -257,6 +304,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Some(id) = completed.id {
                             emit(json!({"type":"result","id":id,"ok":false,"error":error})).await?;
                         }
+                        if is_album {
+                            // A library lookup/activation error does not establish player connectivity.
+                            next_poll = Instant::now();
+                            continue;
+                        }
+                        album_pending = None;
                         online = false; failures += 1;
                         let retry = retry_delay(failures);
                         next_poll = Instant::now() + retry;
@@ -267,8 +320,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             }
+            Some((id, event)) = library_rx.recv() => {
+                if browse_id == Some(id) {
+                    if event["done"] == true || event["type"] == "library_error" {
+                        browse_id = None;
+                        browse_job = None;
+                    }
+                    emit(event).await?;
+                }
+            }
             _ = tokio::time::sleep_until(next_poll), if job.is_none() && base.is_some() => {}
         }
+    }
+    if let Some(task) = browse_job {
+        task.abort();
     }
     if let Some(task) = job {
         task.abort();
@@ -315,6 +380,7 @@ mod tests {
             op: "volume".into(),
             volume: Some(101),
             address: None,
+            uri: None,
         };
         assert!(command_url(&base, &r).is_err());
         r.volume = Some(0);

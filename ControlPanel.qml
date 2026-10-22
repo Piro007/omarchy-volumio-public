@@ -12,13 +12,29 @@ Ui.Panel {
     property var anchorItem: null
     property var hostWidget: null
     property var service: null
+    property bool browsingAlbums: false
     readonly property var snapshot: service ? service.snapshot : ({})
     readonly property bool online: service ? service.online : false
     readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
     readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
-    onOpenedChanged: if (opened) {
-        addressField.text = service ? service.address : "http://volumio.local";
-        if (service) service.refresh();
+    onOpenedChanged: {
+        if (opened) {
+            addressField.text = service ? service.address : "http://volumio.local";
+            if (service) service.refresh();
+        } else {
+            browsingAlbums = false;
+            if (service) service.cancelBrowse();
+        }
+    }
+    function showAlbums() {
+        addressField.focus = false;
+        browsingAlbums = true;
+        Qt.callLater(browser.enter);
+    }
+    function hideAlbums() {
+        browsingAlbums = false;
+        if (service) service.cancelBrowse();
+        keys.forceActiveFocus();
     }
     function switchPanel(direction) {
         return bar ? bar.switchPanelFrom(hostWidget || root, direction) : false;
@@ -30,12 +46,12 @@ Ui.Panel {
         bar: root.bar
         open: root.opened
         focusTarget: keys
-        contentWidth: panel.fittedContentWidth(Style.space(340))
-        contentHeight: panel.fittedContentHeight(content.implicitHeight)
+        contentWidth: panel.fittedContentWidth(Style.space(root.browsingAlbums ? 560 : 340))
+        contentHeight: panel.fittedContentHeight(root.browsingAlbums ? Style.space(520) : content.implicitHeight)
         Ui.PanelKeyCatcher {
             id: keys
             anchors.fill: parent
-            blocked: addressField.activeFocus
+            blocked: root.browsingAlbums || addressField.activeFocus
             onCloseRequested: root.close()
             onTabRequested: function(direction) { root.switchPanel(direction); }
             onActivateRequested: if (root.service) root.service.action(root.snapshot.status === "play" ? "pause" : "play")
@@ -43,8 +59,19 @@ Ui.Panel {
                 if (dx !== 0 && root.online && !root.snapshot.disableVolumeControl)
                     root.service.setVolume(root.snapshot.volume + dx, true);
             }
+            AlbumBrowser {
+                id: browser
+                anchors.fill: parent
+                visible: root.browsingAlbums
+                service: root.service
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onBackRequested: root.hideAlbums()
+                onCloseRequested: root.close()
+            }
             Column {
                 id: content
+                visible: !root.browsingAlbums
                 width: parent.width
                 spacing: Style.space(12)
                 Row {
@@ -127,6 +154,13 @@ Ui.Panel {
                         Keys.onLeftPressed: if (enabled) root.service.setVolume(Math.max(0, value - 1), true)
                         Keys.onRightPressed: if (enabled) root.service.setVolume(Math.min(100, value + 1), true)
                     }
+                }
+                Ui.Button {
+                    text: "Browse albums"
+                    foreground: root.foreground
+                    focusable: true
+                    enabled: root.service && root.service.ready
+                    onClicked: root.showAlbums()
                 }
                 Ui.PanelSeparator { foreground: root.foreground }
                 Label { text: "PLAYER"; font.pixelSize: Style.font.caption; opacity: 0.65 }

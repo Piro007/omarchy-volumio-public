@@ -23,9 +23,30 @@ TestCase {
         compare(Model.statusLabel(false, true, {}), "Connecting…");
         compare(Model.statusLabel(true, false, {status: "pause"}), "Paused");
     }
-    function test_long_title() {
-        verify(Model.barLabel(true, {title: "abcdefghijklmnopqrstuvwxyz0123456789"}).length <= 24);
-        compare(Model.barLabel(true, {}), "Volumio");
+    function test_tooltip() {
         verify(Model.safeTooltip({title: "<b>titre</b>\nligne"}).indexOf("<") < 0);
+    }
+    function test_icon_mode_from_persisted_bar() {
+        compare(Model.iconModeFromBar({}), "cover");
+        compare(Model.iconModeFromBar({layout: {right: [
+            {id: "delormous.volumio", barIcon: "scope"}]}}), "scope");
+        compare(Model.iconModeFromBar({layout: {left: [
+            {id: "delormous.volumio", barIcon: "bogus"}]}}), "cover");
+        compare(Model.iconModeFromBar({layout: {center: [
+            {id: "other", barIcon: "scope"}]}}), "cover");
+    }
+    function test_waveforms() {
+        compare(Model.waveValue("sine", 0), 0);
+        fuzzyCompare(Model.waveValue("sine", Math.PI / 2), 1, 1e-9);
+        compare(Model.waveValue("square", 0.1), 1);
+        compare(Model.waveValue("square", Math.PI + 0.1), -1);
+        compare(Model.waveValue("saw", 0), -1);
+        compare(Model.waveValue("triangle", 0), 0);
+        fuzzyCompare(Model.waveValue("triangle", Math.PI / 2), 1, 1e-9);
+        compare(Model.blendWave("sine", "square", 0.3, 0), Model.waveValue("sine", 0.3));
+        compare(Model.blendWave("sine", "square", 0.3, 1), Model.waveValue("square", 0.3));
+        compare(Model.smoothstep(0), 0);
+        compare(Model.smoothstep(1), 1);
+        verify(Model.smoothstep(0.5) > 0.49 && Model.smoothstep(0.5) < 0.51);
     }
 }

@@ -68,10 +68,37 @@ qs log -p /usr/share/omarchy/shell --tail 100
 ```
 
 Manually check click, Escape, artwork, long titles, keyboard operation,
-control alignment and unavailable-player appearance. Disabling a plugin
-removes its settings in Omarchy; test persistence with reload/restart, and
-restore the address after any disable/re-enable test. A rescan can retain
-cached QML on the tested version; restart the shell after source updates.
+control alignment and unavailable-player appearance. For the bar icon, check
+both modes, right-click switching, the tooltip, artwork changes, the fallback
+glyph, scope freezing on pause and flattening when stopped or offline, and
+that the mode survives a shell restart and appears on every monitor. Disabling
+a plugin removes its settings in Omarchy; test persistence with
+reload/restart, and restore the address and icon mode after any
+disable/re-enable test. A rescan can retain cached QML on the tested version;
+restart the shell after source updates.
+
+## Album browser: separate validation step
+
+The feature has only compilation/static checks so far. Do not interpret the
+older control-plugin test results as album-browser validation. No live queue
+or playback request was sent while implementing it.
+
+In the next, explicitly authorized testing step, cover:
+
+- Paged albums and tracks; internal-only, NAS/USB-only and mixed-source albums;
+  identical titles with distinct URIs; empty libraries and missing artwork.
+- Progressive results, cache/refresh, Back/Escape, small screens, keyboard
+  focus and Enter activation without leaking play/pause shortcuts.
+- All internal tracks resolved before one `replaceAndPlay` request, correct
+  order/index, duplicate activation suppression and no automatic replay after
+  timeouts. Failed lookups must leave the queue untouched.
+- Scan cancellation/stale responses after close, address changes and backend
+  restart; library errors must not disable working controls.
+- Package inclusion of `AlbumBrowser.qml` and unchanged existing controls.
+
+Run targeted automated tests first, then a visual check and one real album
+activation only with permission to replace the queue. Compilation does not
+verify server-side playback semantics.
 
 ## Distribution
 

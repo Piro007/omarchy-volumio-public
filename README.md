@@ -3,10 +3,12 @@
 Control a Volumio player from the native Omarchy/Quickshell bar.
 
 - Compact widget with a themed control panel.
-- Track title, artist, album, artwork and playback status.
+- Album cover art or an animated oscilloscope in the bar; right-click switches.
+- Track title, artist, album, artwork and playback status in the panel and tooltip.
 - Play/pause, previous/next and volume controls.
 - Automatic state updates, offline indication and reconnection.
 - Player address saved through Omarchy's configuration API.
+- Internal-storage album browser with cover artwork and click-to-play.
 
 Version **0.1.0** is a working MVP for one player and the official Omarchy bar.
 
@@ -51,12 +53,55 @@ State refreshes every two seconds. When disconnected, controls are disabled
 and the last metadata remains visible. Automatic retries back off to at most
 30 seconds; **Refresh** retries immediately. Failed commands are never replayed.
 
+### Bar display
+
+The bar shows the current album's cover art by default. Right-click the
+widget to switch to an oscilloscope and back; the choice is saved as
+`barIcon` in the widget's entry next to the address. Left click still opens
+the panel. No title is shown in the bar: hover for the tooltip or open the
+panel for details. Missing artwork, an unreachable player or a stopped
+backend falls back to the music icon.
+
+The oscilloscope is a decorative animation driven by playback state, not by
+audio levels (the Volumio API exposes none). It scrolls and morphs between
+sine, sawtooth, square and triangle while playing, freezes on pause and
+flattens when stopped or unreachable.
+
+You can also choose the mode from the command line:
+
+```sh
+omarchy bar set delormous.volumio barIcon scope
+omarchy bar set delormous.volumio barIcon cover
+```
+
 Optional CLI configuration:
 
 ```sh
 omarchy bar set delormous.volumio address http://YOUR-PLAYER
 omarchy bar move delormous.volumio --section right
 ```
+
+## Browse internal albums
+
+Click **Browse albums** to open a cover grid. Only albums containing music
+in Volumio's internal storage appear. Clicking a cover starts that album,
+**replacing the current queue** with its internal-storage tracks in the
+order returned by Volumio. Mixed-source albums play only their internal tracks.
+There is no separate Play button or track-details view.
+
+Browsing and scrolling do not affect playback. Use arrow keys to focus a
+cover and Enter to play it; Space does nothing in the grid. **Back** returns
+to the controls, Escape closes the panel, and **Refresh** reloads the library.
+Albums appear progressively and remain cached in memory until refresh,
+backend restart or player reconfiguration. Missing covers use a music icon.
+
+If activation fails after the request was sent, the queue may already have
+changed. Check the player before retrying; activation is never retried
+automatically. Library listing errors do not disable otherwise working controls.
+
+**Development status:** the album browser has compilation/static checks only.
+Functional and visual validation are deferred to a separate testing step.
+Build the updated backend together with the QML files before testing.
 
 ## Update
 
@@ -77,8 +122,8 @@ omarchy plugin remove delormous.volumio
 ```
 
 Omarchy removes a disabled plugin's entry and settings. Re-enabling it uses
-the default address; save your custom address again. Reloading or restarting
-the shell preserves the configured address.
+the default address and cover art; save your custom address and switch the
+icon mode again. Reloading or restarting the shell preserves both settings.
 
 ## Troubleshooting
 
@@ -98,9 +143,13 @@ omarchy-shell delormous.volumio status
 
 ## Limitations and development
 
-The MVP does not manage queues, libraries, multiroom, authentication or player
-system settings. Multi-monitor behavior and other architectures need further
-validation. Native binary archives are architecture/libc-specific.
+The browser supports internal-storage albums only, with a 10,000-item limit
+per album or library listing. Queue editing, USB/NAS browsing, library
+management, multiroom, authentication and player system settings are outside
+its scope. The bar oscilloscope is synthetic: Volumio exposes no audio-level
+data, so it follows playback state only. Multi-monitor behavior and other
+architectures need further validation. Native binary archives are
+architecture/libc-specific.
 
 See [development and packaging](docs/development.md),
 [architecture](docs/architecture.md) and [validation results](docs/validation.md).

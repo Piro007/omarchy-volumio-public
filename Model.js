@@ -13,15 +13,46 @@ function addressFromBar(config) {
     return "http://volumio.local";
 }
 
+function iconModeFromBar(config) {
+    var layout = config && config.layout ? config.layout : {};
+    var sections = ["left", "centerBegin", "center", "centerEnd", "tray", "right"];
+    for (var s = 0; s < sections.length; ++s) {
+        var entries = layout[sections[s]] || [];
+        for (var i = 0; i < entries.length; ++i) {
+            if (entries[i].id === "delormous.volumio")
+                return entries[i].barIcon === "scope" ? "scope" : "cover";
+        }
+    }
+    return "cover";
+}
+
 function statusLabel(online, connecting, state) {
     if (!online) return connecting ? "Connecting…" : "Volumio unreachable";
     return state.status === "play" ? "Playing" : state.status === "pause" ? "Paused" : "Stopped";
 }
 
-function barLabel(online, state) {
-    if (!online) return "Volumio · offline";
-    var title = String(state.title || "Volumio").replace(/\s+/g, " ");
-    return title.length > 24 ? title.substring(0, 23) + "…" : title;
+// Waveforms used by the bar oscilloscope. Phase is in radians, so shapes with
+// the same period can be blended sample by sample for the morph.
+function waveValue(shape, phase) {
+    if (shape === "saw") {
+        var cycles = phase / (2 * Math.PI);
+        return 2 * (cycles - Math.floor(cycles)) - 1;
+    }
+    if (shape === "square") return Math.sin(phase) >= 0 ? 1 : -1;
+    if (shape === "triangle") return (2 / Math.PI) * Math.asin(Math.sin(phase));
+    return Math.sin(phase);
+}
+
+function smoothstep(t) {
+    t = Math.max(0, Math.min(1, t));
+    return t * t * (3 - 2 * t);
+}
+
+function blendWave(fromShape, toShape, phase, mix) {
+    mix = Math.max(0, Math.min(1, mix));
+    var from = waveValue(fromShape, phase);
+    var to = waveValue(toShape, phase);
+    return from + (to - from) * mix;
 }
 
 function safeTooltip(state) {

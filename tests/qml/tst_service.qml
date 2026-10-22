@@ -13,10 +13,15 @@ TestCase {
         property var barConfig: ({})
         property string persisted: ""
         property int writes: 0
+        property var entry: null
+        property string entryJson: ""
         function updateEntryInline(id, settings) {
             // Omarchy's detached snapshot can remain stale after a write.
-            if (persisted === settings.address) return false;
-            persisted = settings.address;
+            var json = JSON.stringify(settings);
+            if (entryJson === json) return false;
+            entry = settings;
+            entryJson = json;
+            if (settings.address !== undefined) persisted = String(settings.address);
             writes++;
             return true;
         }
@@ -27,6 +32,8 @@ TestCase {
         Harness.starts = 0;
         shell.writes = 0;
         shell.persisted = "http://music.local/";
+        shell.entry = null;
+        shell.entryJson = "";
         shell.barConfig = {layout: {right: [{id: "delormous.volumio", address: shell.persisted}]}};
         service = serviceComponent.createObject(test, {shell: shell});
         verify(service !== null);
@@ -80,6 +87,70 @@ TestCase {
         service.receiveConfig("invalid");
         compare(service.savedAddress, "http://saved.local/");
         verify(service.lastError.indexOf("Could not read") >= 0);
+    }
+    function test_icon_mode_persists_with_address() {
+        deliver({type: "ready", protocol: 1});
+        compare(service.iconMode, "cover");
+        service.toggleIconMode();
+        compare(service.iconMode, "scope");
+        compare(service.savedIconMode, "scope");
+        compare(shell.entry.barIcon, "scope");
+        compare(shell.entry.address, shell.persisted);
+        service.saveAddress("http://another.local");
+        deliver({type: "configured", id: service.pendingSave, address: "http://another.local/"});
+        compare(shell.entry.barIcon, "scope");
+        compare(shell.entry.address, "http://another.local/");
+        service.toggleIconMode();
+        compare(service.iconMode, "cover");
+        compare(shell.entry.barIcon, "cover");
+        compare(shell.entry.address, "http://another.local/");
+        compare(shell.writes, 3);
+    }
+    function test_saved_icon_mode_restored_from_config() {
+        service.receiveConfig(JSON.stringify({bar: {layout: {right: [
+            {id: "delormous.volumio", address: "http://saved.local/", barIcon: "scope"}
+        ]}}}));
+        compare(service.iconMode, "scope");
+        compare(service.savedIconMode, "scope");
+        compare(shell.writes, 0);
+        service.receiveConfig(JSON.stringify({bar: {layout: {right: [
+            {id: "delormous.volumio", address: "http://saved.local/"}
+        ]}}}));
+        compare(service.iconMode, "cover");
+    }
+    function test_injected_icon_mode_is_saved_state() {
+        service.destroy();
+        wait(0);
+        shell.barConfig = {layout: {right: [
+            {id: "delormous.volumio", address: shell.persisted, barIcon: "scope"}
+        ]}};
+        service = serviceComponent.createObject(test, {shell: shell});
+        verify(service !== null);
+        compare(service.iconMode, "scope");
+        compare(service.savedIconMode, "scope");
+        service.toggleIconMode();
+        compare(service.iconMode, "cover");
+        compare(shell.entry.barIcon, "cover");
+    }
+    function test_external_icon_mode_is_then_toggleable() {
+        service.syncIconMode("scope");
+        compare(service.iconMode, "scope");
+        compare(service.savedIconMode, "scope");
+        compare(shell.writes, 0);
+        service.toggleIconMode();
+        compare(service.iconMode, "cover");
+        compare(shell.entry.barIcon, "cover");
+        compare(shell.writes, 1);
+    }
+    function test_icon_mode_toggle_is_idempotent() {
+        service.setIconMode("scope");
+        compare(service.iconMode, "scope");
+        compare(shell.writes, 1);
+        service.setIconMode("scope");
+        compare(shell.writes, 1);
+        service.setIconMode("bogus");
+        compare(service.iconMode, "cover");
+        compare(shell.writes, 2);
     }
     function test_volume_coalescing_and_disabled_control() {
         online();

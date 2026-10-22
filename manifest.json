@@ -13,7 +13,10 @@
     "category": "Media",
     "allowMultiple": false,
     "defaultSection": "right",
-    "defaults": {"address": "http://volumio.local"},
-    "schema": [{"key": "address", "type": "string", "label": "Player address"}]
+    "defaults": {"address": "http://volumio.local", "barIcon": "cover"},
+    "schema": [
+      {"key": "address", "type": "string", "label": "Player address"},
+      {"key": "barIcon", "type": "enum", "label": "Bar icon", "options": ["cover", "scope"], "defaultValue": "cover", "description": "Album cover art or an animated oscilloscope. Right-click the bar widget to switch."}
+    ]
   }
 }

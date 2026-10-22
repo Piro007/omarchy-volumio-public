@@ -1,5 +1,60 @@
 # MVP validation
 
+## Bar icon modes (2026-10-22)
+
+Implemented on `feat/album-browser`: the bar entry is now icon-only, showing
+album cover art or an oscilloscope, switched by right click and persisted as
+`barIcon`. The address and backend protocol are unchanged.
+
+Completed checks:
+
+- `bash scripts/check.sh`: passed. Rust formatting, Clippy and build; 3 Rust
+  unit tests; 7 loopback bridge tests; 21 QML test functions (27 including
+  setup/cleanup), including new model, service and oscilloscope tests for mode
+  parsing, waveform blending, persistence, config restore and idempotent
+  toggling; official manifest validation and `qmllint` for all five production
+  QML files.
+- `bash scripts/package.sh`: passed; the archive contains `Oscilloscope.qml`,
+  the manifest, the documentation updates and the rebuilt binary.
+- Offscreen `grabToImage` render of `Oscilloscope.qml` at one sine frame and
+  five hold/morph points: all four shapes and the intermediate blends drew as
+  expected with the baseline and frame.
+
+Not verified:
+
+- Visual appearance, right-click behaviour and tooltips in the real shell;
+  the offscreen render does not test the bar slot, theme colours or size.
+- Persistence across a shell restart, mode changes through `omarchy bar set`,
+  multi-monitor synchronisation, vertical bars and idle CPU cost.
+- Installation, shell restarts and live player requests were not performed.
+
+## Album browser implementation (2026-10-22)
+
+The album-grid/click-to-play feature is implemented on `feat/album-browser`.
+Only Rust compilation, QML static analysis and manifest validation are in
+scope for this phase. Functional/visual tests, live queue replacement,
+installation and desktop restarts are deferred as requested. The successful
+MVP results below describe the earlier control plugin, not validation of the
+new album-browser behavior.
+
+Completed checks:
+
+- `cargo check --locked --all-targets`: passed; existing test targets compile
+  but no tests were executed.
+- `cargo build --locked`: passed.
+- QML lint for `Service.qml`, `ControlPanel.qml` and `AlbumBrowser.qml`: passed
+  with no reported warnings (the existing dynamic-facade suppression remains).
+- `omarchy plugin validate .`, modified-script syntax and whitespace checks:
+  passed.
+
+No new dependencies, live player requests, deployment, shell restart or
+functional test runs were needed for implementation. The previous installation
+remains unchanged. Library filtering, real queue replacement and visual behavior
+are explicitly **unverified** until the separate test step.
+
+Implementation details and the later validation scenarios are recorded in
+[architecture](architecture.md) and [development](development.md).
+
 ## Results through final validation (2026-10-21)
 
 Environment: Omarchy 4.0.6, Qt 6.12.0, Rust 1.99.1, x86_64 Linux.
