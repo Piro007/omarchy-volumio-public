@@ -35,14 +35,6 @@ suppressed for dynamic Omarchy QObject facades; other warnings fail lint.
 Loopback sockets require network permission in restricted sandboxes.
 The default suite does not contact or control a real player.
 
-Responsiveness tests hold a loopback state response open and verify that
-commands reach the server before it is released, with no stale state applied.
-A delayed command effect must appear within 1.5 seconds, followed by a return
-to normal polling after the two-second settling window. QML tests exercise
-continuous dragging, release, repeated keyboard increments, target expiry,
-and cancellation on errors, disconnect, reconfiguration and disabled volume.
-These checks measure simulated behavior, not real audio latency.
-
 ## Live integration (explicit opt-in)
 
 First deploy the committed version through the official Omarchy update/install

@@ -28,21 +28,12 @@ address and cover mode. Reloading or restarting the shell preserves settings.
 The panel shows title, artist, album, artwork, and playback status. Use the
 previous, play/pause, and next buttons and the volume slider. Volume
 adjustment is disabled when Volumio reports fixed output or no numeric volume.
-Dragging sends the first volume value immediately and groups further changes
-at 150 ms intervals. Release sends the latest value as soon as any pending
-volume request finishes. Repeated arrow presses accumulate from your latest
-requested volume. The slider shows that requested value while waiting for
-confirmation, then returns to the player's value if it remains unconfirmed
-2.5 seconds after acknowledgement.
 
 Escape closes the panel. Space/Enter toggles playback and Left/Right adjusts
 volume when the address field is not being edited and neither browser is open.
 
 The backend normally polls two seconds after each successful state response
-and refreshes immediately after successful commands, then every 250 ms after
-responses for two seconds to catch delayed state changes. Commands take
-priority over in-flight state reads; an already submitted command still runs
-to completion. Offline retries back off to at most 30 seconds;
+and refreshes after commands. Offline retries back off to at most 30 seconds;
 **Refresh** requests an immediate poll once any active request finishes.
 Resolving and activating an album also delays polling and transport commands.
 There is a per-HTTP-request timeout, but no overall album-activation deadline.

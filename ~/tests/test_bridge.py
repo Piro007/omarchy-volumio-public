@@ -28,10 +28,6 @@ class Player(ThreadingHTTPServer):
         self.playlists = []
         self.playlist_mode = "ok"
         self.command_started = threading.Event()
-        self.state_started = threading.Event()
-        self.state_gate = None
-        self.state_calls = []
-        self.apply_delay = 0
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -47,15 +43,6 @@ class Handler(BaseHTTPRequestHandler):
         player = self.server
         path = urlparse(self.path)
         if path.path.endswith("getState"):
-            player.state_calls.append(time.monotonic())
-            gate = player.state_gate
-            if gate is not None:
-                player.state_gate = None
-                stale = json.dumps(player.snapshot).encode()
-                player.state_started.set()
-                gate.wait(3)
-                self.respond(stale)
-                return
             if player.mode == "slow":
                 time.sleep(4)
             if player.mode == "http":
@@ -88,15 +75,10 @@ class Handler(BaseHTTPRequestHandler):
             player.command_started.set()
             if player.command_delay:
                 time.sleep(player.command_delay)
-            def apply():
-                if cmd in ("play", "pause"):
-                    player.snapshot["status"] = cmd
-                if cmd == "volume":
-                    player.snapshot["volume"] = int(query["volume"][0])
-            if player.apply_delay:
-                threading.Timer(player.apply_delay, apply).start()
-            else:
-                apply()
+            if cmd in ("play", "pause"):
+                player.snapshot["status"] = cmd
+            if cmd == "volume":
+                player.snapshot["volume"] = int(query["volume"][0])
             data = b'{}'
         self.respond(data)
 
@@ -119,7 +101,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             self.wfile.write(data)
-        except (BrokenPipeError, ConnectionResetError):
+        except BrokenPipeError:
             pass
 
 
@@ -184,48 +166,6 @@ class Tests(unittest.TestCase):
     def track(storage, name):
         return {"uri": "music-library/%s/%s.flac" % (storage, name),
                 "service": "mpd", "type": "song", "title": name}
-
-    def test_commands_preempt_slow_state_and_discard_its_response(self):
-        self.bridge.configure(self.player.address)
-        for op, fields in (("play", {}), ("volume", {"volume": 31}), ("pause", {})):
-            with self.subTest(op=op):
-                gate = threading.Event()
-                self.player.state_gate = gate
-                self.player.state_started.clear()
-                self.player.command_started.clear()
-                self.bridge.send("refresh")
-                self.assertTrue(self.player.state_started.wait(1))
-                try:
-                    request_id = self.bridge.send(op, **fields)
-                    # The read is still held: dispatch must not depend on it finishing.
-                    self.assertTrue(self.player.command_started.wait(.8))
-                    self.assertTrue(self.bridge.wait(lambda e: e.get("id") == request_id)["ok"])
-                    state = self.bridge.wait(lambda e: e["type"] == "state")["state"]
-                    self.assertEqual(state["status"], self.player.snapshot["status"])
-                    self.assertEqual(state["volume"], self.player.snapshot["volume"])
-                finally:
-                    gate.set()
-                # Releasing the obsolete response must not revert the state.
-                state = self.bridge.wait(lambda e: e["type"] == "state")["state"]
-                self.assertEqual(state["status"], self.player.snapshot["status"])
-                self.assertEqual(state["volume"], self.player.snapshot["volume"])
-        self.assertEqual(len(self.player.calls), 3)
-
-    def test_delayed_state_is_confirmed_quickly_then_polling_slows(self):
-        self.bridge.configure(self.player.address)
-        self.player.apply_delay = .3
-        started = time.monotonic()
-        request_id = self.bridge.send("play")
-        self.assertTrue(self.bridge.wait(lambda e: e.get("id") == request_id)["ok"])
-        self.bridge.wait(lambda e: e["type"] == "state" and e["state"]["status"] == "play", timeout=1.5)
-        self.assertLess(time.monotonic() - started, 1.5)
-        # The burst is bounded even though no extra commands arrive.
-        self.bridge.wait(lambda e: e["type"] == "state" and time.monotonic() - started >= 2)
-        before = time.monotonic()
-        self.bridge.wait(lambda e: e["type"] == "state", timeout=3)
-        self.assertGreater(time.monotonic() - before, 1.5)
-        self.assertLessEqual(len(self.player.state_calls), 12)
-        self.assertEqual(len(self.player.calls), 1)
 
     def test_browse_paged_internal_and_mixed_albums(self):
         uris = ["albums://Artist/" + name for name in ("Internal", "NAS", "USB", "Mixed")]
