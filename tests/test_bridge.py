@@ -32,6 +32,10 @@ class Player(ThreadingHTTPServer):
         self.state_gate = None
         self.state_calls = []
         self.apply_delay = 0
+        self.command_status = 200
+        self.activation_status = 200
+        self.command_body = b'{}'
+        self.paths = []
         threading.Thread(target=self.serve_forever, daemon=True).start()
 
     @property
@@ -46,6 +50,13 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         player = self.server
         path = urlparse(self.path)
+        player.paths.append(path.path)
+        if path.path == "/albumart":
+            self.respond(b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>', content_type="image/svg+xml")
+            return
+        if path.path == "/redirected":
+            self.respond(b'{}')
+            return
         if path.path.endswith("getState"):
             player.state_calls.append(time.monotonic())
             gate = player.state_gate
@@ -86,6 +97,9 @@ class Handler(BaseHTTPRequestHandler):
             cmd = query["cmd"][0]
             player.calls.append(query)
             player.command_started.set()
+            if player.command_status != 200:
+                self.respond(player.command_body, status=player.command_status)
+                return
             if player.command_delay:
                 time.sleep(player.command_delay)
             def apply():
@@ -97,7 +111,7 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Timer(player.apply_delay, apply).start()
             else:
                 apply()
-            data = b'{}'
+            data = player.command_body
         self.respond(data)
 
     def do_POST(self):
@@ -110,11 +124,13 @@ class Handler(BaseHTTPRequestHandler):
         player.activations.append((body, list(player.library_calls)))
         if player.activation_delay:
             time.sleep(player.activation_delay)
-        self.respond(b'{}')
+        self.respond(b'{}', status=player.activation_status)
 
-    def respond(self, data):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+    def respond(self, data, status=200, content_type="application/json"):
+        self.send_response(status)
+        if 300 <= status < 400:
+            self.send_header("Location", "/redirected")
+        self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         try:
@@ -184,6 +200,47 @@ class Tests(unittest.TestCase):
     def track(storage, name):
         return {"uri": "music-library/%s/%s.flac" % (storage, name),
                 "service": "mpd", "type": "song", "title": name}
+
+    def test_redirects_are_failures_without_following_or_replaying(self):
+        self.player.library['albums://Artist/Album'] = [self.track('INTERNAL', 'One')]
+        for op, fields in [('play', {}), ('play_playlist', {'name': 'Jazz'}),
+                           ('play_album', {'uri': 'albums://Artist/Album'})]:
+            with self.subTest(op=op):
+                self.bridge.configure(self.player.address)
+                self.player.command_status = 302
+                self.player.activation_status = 307
+                request_id = self.bridge.send(op, **fields)
+                result = self.bridge.wait(lambda e: e.get('id') == request_id)
+                self.assertFalse(result['ok'])
+                self.assertIn('HTTP status: 30', result['error'])
+                if op != 'play':
+                    self.assertIn('may have changed', result['error'])
+                count = len(self.player.calls) + len(self.player.activations)
+                self.bridge.send('refresh')
+                self.bridge.wait(lambda e: e['type'] == 'state')
+                self.assertEqual(len(self.player.calls) + len(self.player.activations), count)
+                self.assertNotIn('/redirected', self.player.paths)
+
+    def test_successful_empty_and_text_command_acknowledgements(self):
+        self.bridge.configure(self.player.address)
+        for body in (b'', b'OK'):
+            self.player.command_body = body
+            request_id = self.bridge.send('play')
+            self.assertTrue(self.bridge.wait(lambda e: e.get('id') == request_id)['ok'])
+
+    def test_timing_is_optional_and_uses_confirmed_state_only(self):
+        for fields, seek, duration in [({'seek': 53057, 'duration': 809}, 53057, 809),
+                                      ({'seek': '1000', 'duration': '60'}, 1000, 60),
+                                      ({'seek': 0, 'duration': 0}, 0, None),
+                                      ({'seek': -1, 'duration': 'bad'}, None, None),
+                                      ({}, None, None)]:
+            self.player.snapshot.pop('seek', None)
+            self.player.snapshot.pop('duration', None)
+            self.player.snapshot.update(fields)
+            state = self.bridge.configure(self.player.address)['state']
+            self.assertEqual(state['seek'], seek)
+            self.assertEqual(state['duration'], duration)
+        self.assertEqual(self.player.calls, [])
 
     def test_commands_preempt_slow_state_and_discard_its_response(self):
         self.bridge.configure(self.player.address)

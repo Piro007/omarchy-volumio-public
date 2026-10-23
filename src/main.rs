@@ -35,6 +35,17 @@ struct State {
     volume: Option<u8>,
     disable_volume_control: bool,
     mute: bool,
+    seek: Option<f64>,
+    duration: Option<f64>,
+}
+
+// Keep optional timing safe for QML's JavaScript numbers. Volumio uses
+// milliseconds for seek and seconds for duration, including numeric strings.
+fn timing(value: &Value) -> Option<f64> {
+    value
+        .as_f64()
+        .or_else(|| value.as_str()?.parse().ok())
+        .filter(|v| v.is_finite() && *v >= 0.0 && *v <= 9_007_199_254_740_991.0)
 }
 
 fn address(raw: &str) -> Result<Url, String> {
@@ -94,21 +105,22 @@ fn state(value: Value, base: &Url) -> Result<State, String> {
             .unwrap_or(false)
             || volume.is_none(),
         mute: value.get("mute").and_then(Value::as_bool).unwrap_or(false),
+        seek: timing(&value["seek"]),
+        duration: timing(&value["duration"]).filter(|v| *v > 0.0),
     })
 }
 
 async fn fetch(client: &Client, url: Url) -> Result<Vec<u8>, String> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| e.to_string())?
-        .error_for_status()
-        .map_err(|e| e.to_string())?;
+    let response = client.get(url).send().await.map_err(|e| e.to_string())?;
     response_bytes(response).await
 }
 
 async fn response_bytes(mut response: reqwest::Response) -> Result<Vec<u8>, String> {
+    // error_for_status rejects only 4xx/5xx. A disabled redirect must never
+    // become a successful command acknowledgement (even with an empty body).
+    if !response.status().is_success() {
+        return Err(format!("Unexpected HTTP status: {}", response.status()));
+    }
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|e| e.to_string())? {
         if bytes.len() + chunk.len() > 1_048_576 {
@@ -391,6 +403,42 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn optional_timing_preserves_units_and_rejects_invalid_values() {
+        let base = address("http://localhost").unwrap();
+        for (seek, duration) in [(json!(53057), json!(809)), (json!("53057"), json!("809"))] {
+            let s = state(
+                json!({"status":"play", "seek":seek, "duration":duration}),
+                &base,
+            )
+            .unwrap();
+            assert_eq!(s.seek, Some(53057.0));
+            assert_eq!(s.duration, Some(809.0));
+        }
+        for value in [
+            Value::Null,
+            json!(-1),
+            json!(true),
+            json!("NaN"),
+            json!("inf"),
+            json!("bad"),
+            json!(1e20),
+        ] {
+            let s = state(
+                json!({"status":"pause", "seek":value, "duration":value}),
+                &base,
+            )
+            .unwrap();
+            assert_eq!(s.seek, None);
+            assert_eq!(s.duration, None);
+        }
+        let s = state(json!({"status":"stop", "seek":0, "duration":0}), &base).unwrap();
+        assert_eq!(s.seek, Some(0.0));
+        assert_eq!(s.duration, None);
+        let s = state(json!({"status":"play"}), &base).unwrap();
+        assert_eq!(s.seek, None);
+        assert_eq!(s.duration, None);
+    }
     #[test]
     fn normalize_state_and_art() {
         let base = address("http://192.168.5.121").unwrap();

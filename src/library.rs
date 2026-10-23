@@ -193,8 +193,6 @@ pub async fn play_album(client: &Client, base: &Url, uri: &str) -> Result<(), St
             .body(body)
             .send()
             .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
             .map_err(|e| e.to_string())?;
         let bytes = super::response_bytes(response).await?;
         super::command_ack(&bytes)
