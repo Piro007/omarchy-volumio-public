@@ -31,6 +31,19 @@ function statusLabel(online, connecting, state) {
     return state.status === "play" ? "Playing" : state.status === "pause" ? "Paused" : "Stopped";
 }
 
+function validTime(value) {
+    return typeof value === "number" && isFinite(value) && value >= 0;
+}
+
+function formatTime(seconds) {
+    if (!validTime(seconds)) return "--:--";
+    var total = Math.floor(seconds);
+    var minutes = Math.floor(total / 60);
+    var rest = String(total % 60).padStart(2, "0");
+    return minutes >= 60 ? Math.floor(minutes / 60) + ":" + String(minutes % 60).padStart(2, "0") + ":" + rest
+        : minutes + ":" + rest;
+}
+
 // Waveforms used by the bar oscilloscope. Phase is in radians, so shapes with
 // the same period can be blended sample by sample for the morph.
 function waveValue(shape, phase) {

@@ -21,6 +21,14 @@ Item {
         syncIconMode(Model.iconModeFromBar(shell.barConfig));
     }
     property string lastError: ""
+    property string backendError: ""
+    property string connectionError: ""
+    property string configurationError: ""
+    property int retrySeconds: 0
+    property bool protocolRejected: false
+    readonly property string diagnosticError: [backendError, connectionError
+        ? connectionError + (retrySeconds > 0 ? " · Retry interval: " + retrySeconds + " s" : "") : "",
+        configurationError, lastError].filter(function(message) { return message !== ""; }).join("\n")
     property int sequence: 0
     property int pendingSave: -1
     property int pendingCommand: -1
@@ -68,7 +76,8 @@ Item {
         if (ready) send("configure", {address: address});
     }
     function saveAddress(value) {
-        if (!ready) { lastError = "Backend unavailable"; return; }
+        if (!ready) { if (!backendError) backendError = "Backend unavailable"; return; }
+        lastError = "";
         clearVolume();
         pendingSave = send("configure", {address: String(value).trim()});
     }
@@ -159,7 +168,8 @@ Item {
             if (!config.bar || !config.bar.layout) throw new Error("Missing bar configuration");
             configure(Model.addressFromBar(config.bar));
             syncIconMode(Model.iconModeFromBar(config.bar));
-        } catch (e) { lastError = "Could not read saved Omarchy configuration"; }
+            configurationError = "";
+        } catch (e) { configurationError = "Could not read saved Omarchy configuration"; }
     }
     function action(op) {
         if (!online || busy) return;
@@ -199,12 +209,23 @@ Item {
     function receive(line) {
         var event;
         try { event = JSON.parse(line); } catch (e) { lastError = "Invalid backend response"; return; }
+        if (protocolRejected) return;
         if (event.type === "ready") {
             startupTimer.stop();
             if (event.protocol !== 1) {
-                lastError = "Unsupported backend protocol; rebuild the installed plugin.";
+                protocolRejected = true;
+                ready = false; online = false; connecting = false;
+                supportsLibrary = false; supportsPlaylists = false;
+                clearLibrary(); clearVolume();
+                pendingSave = -1; pendingCommand = -1;
+                connectionError = ""; retrySeconds = 0;
+                backendError = "Unsupported backend protocol; rebuild the installed plugin and restart the shell.";
+                restartTimer.stop();
+                configReader.running = false;
+                backend.running = false;
                 return;
             }
+            backendError = "";
             supportsLibrary = Array.isArray(event.features) && event.features.indexOf("albums") >= 0;
             supportsPlaylists = Array.isArray(event.features) && event.features.indexOf("playlists") >= 0;
             ready = true;
@@ -215,7 +236,7 @@ Item {
             address = event.address;
             snapshot = ({});
             clearVolume();
-            lastError = "";
+            connectionError = ""; retrySeconds = 0;
             if (event.id === pendingSave) {
                 pendingSave = -1;
                 if (savedAddress.replace(/\/$/, "") !== address.replace(/\/$/, "")) {
@@ -250,9 +271,14 @@ Item {
             }
             online = true;
             connecting = false;
+            backendError = "";
+            connectionError = "";
+            retrySeconds = 0;
         } else if (event.type === "connection") {
             online = false;
             connecting = event.connecting === true;
+            connectionError = String(event.error || "");
+            retrySeconds = typeof event.retrySeconds === "number" ? Math.max(0, Math.floor(event.retrySeconds)) : 0;
             clearVolume();
         } else if (event.type === "result") {
             if (event.id === pendingPlaylist) {
@@ -282,6 +308,7 @@ Item {
         }
     }
     function failed() {
+        if (stopping || protocolRejected) return;
         ready = false; online = false; connecting = false;
         supportsLibrary = false;
         supportsPlaylists = false;
@@ -291,12 +318,13 @@ Item {
         pendingSave = -1; pendingCommand = -1;
         clearVolume();
         startupTimer.stop();
-        lastError = "Backend unavailable. Retrying in 3 s; build the installed plugin if this persists.";
+        connectionError = ""; retrySeconds = 0;
+        backendError = "Backend unavailable. Retrying in 3 s; build the installed plugin if this persists.";
         if (autoStart && !stopping) restartTimer.restart();
     }
 
     function startBackend() {
-        if (stopping || backend.running) return;
+        if (stopping || protocolRejected || backend.running) return;
         startupTimer.restart();
         backend.running = true;
     }
@@ -313,7 +341,7 @@ Item {
         interval: 5000
         onTriggered: {
             configReader.running = false;
-            root.lastError = "Timed out reading saved Omarchy configuration";
+            root.configurationError = "Timed out reading saved Omarchy configuration";
         }
     }
     Process {
@@ -322,7 +350,7 @@ Item {
         stdout: SplitParser { onRead: function(line) { root.receiveConfig(line); } }
         onRunningChanged: if (running) configTimer.restart(); else configTimer.stop()
         onExited: function(code) {
-            if (code !== 0 && !root.stopping) root.lastError = "Could not read saved Omarchy configuration";
+            if (code !== 0 && !root.stopping && !root.protocolRejected) root.configurationError = "Could not read saved Omarchy configuration";
         }
     }
     // Process may fail before emitting exited (for example, a missing binary).
@@ -342,7 +370,7 @@ Item {
     }
     IpcHandler {
         target: "delormous.volumio"
-        function status(): string { return JSON.stringify({online: root.online, address: root.address, savedAddress: root.savedAddress, iconMode: root.iconMode, backendPid: backend.processId, panelOpen: root.shell ? root.shell.isPluginOpen("delormous.volumio") : false, state: root.snapshot, error: root.lastError}); }
+        function status(): string { return JSON.stringify({online: root.online, address: root.address, savedAddress: root.savedAddress, iconMode: root.iconMode, backendPid: backend.processId, panelOpen: root.shell ? root.shell.isPluginOpen("delormous.volumio") : false, state: root.snapshot, error: root.diagnosticError, backendError: root.backendError, connectionError: root.connectionError, configurationError: root.configurationError, retrySeconds: root.retrySeconds}); }
         function refresh(): void { root.refresh(); }
         function configure(address: string): void { root.saveAddress(address); }
         function action(command: string): void { root.action(command); }

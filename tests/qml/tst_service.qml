@@ -15,7 +15,9 @@ TestCase {
         property int writes: 0
         property var entry: null
         property string entryJson: ""
+        property bool rejectWrites: false
         function updateEntryInline(id, settings) {
+            if (rejectWrites) return false;
             // Omarchy's detached snapshot can remain stale after a write.
             var json = JSON.stringify(settings);
             if (entryJson === json) return false;
@@ -34,6 +36,7 @@ TestCase {
         shell.persisted = "http://music.local/";
         shell.entry = null;
         shell.entryJson = "";
+        shell.rejectWrites = false;
         shell.barConfig = {layout: {right: [{id: "delormous.volumio", address: shell.persisted}]}};
         service = serviceComponent.createObject(test, {shell: shell});
         verify(service !== null);
@@ -86,7 +89,7 @@ TestCase {
         compare(shell.writes, 0);
         service.receiveConfig("invalid");
         compare(service.savedAddress, "http://saved.local/");
-        verify(service.lastError.indexOf("Could not read") >= 0);
+        verify(service.configurationError.indexOf("Could not read") >= 0);
     }
     function test_icon_mode_persists_with_address() {
         deliver({type: "ready", protocol: 1});
@@ -406,7 +409,7 @@ TestCase {
         compare(Harness.starts, 1);
         service.startBackend();
         compare(Harness.starts, 1);
-        tryVerify(function() { return service.lastError.indexOf("Backend unavailable") >= 0; }, 6000);
+        tryVerify(function() { return service.backendError.indexOf("Backend unavailable") >= 0; }, 6000);
         compare(service.online, false);
         compare(Harness.process.running, false);
     }
@@ -419,6 +422,78 @@ TestCase {
         // The process is owned by the service, not a detached global daemon.
         compare(Harness.process, null);
         service = serviceComponent.createObject(test);
+    }
+    function test_recovery_clears_only_transient_diagnostics() {
+        online();
+        deliver({type: "connection", error: "HTTP 503", retrySeconds: 8});
+        compare(service.connectionError, "HTTP 503");
+        compare(service.retrySeconds, 8);
+        verify(service.diagnosticError.indexOf("8 s") >= 0);
+        deliver({type: "result", id: 999, ok: false, error: "Command outcome unknown"});
+        service.receiveConfig("broken JSON");
+        service.failed();
+        verify(service.backendError !== "");
+        online();
+        compare(service.backendError, "");
+        compare(service.connectionError, "");
+        compare(service.retrySeconds, 0);
+        compare(service.lastError, "Command outcome unknown");
+        verify(service.configurationError !== "");
+        deliver({type: "configured", address: service.address});
+        compare(service.lastError, "Command outcome unknown");
+        service.receiveConfig(JSON.stringify({bar: shell.barConfig}));
+        compare(service.configurationError, "");
+    }
+    function test_save_failure_survives_backend_and_connection_recovery() {
+        online();
+        shell.rejectWrites = true;
+        service.saveAddress("http://unsaved.local");
+        deliver({type: "configured", id: service.pendingSave, address: "http://unsaved.local/"});
+        compare(service.lastError, "Could not save the address in Omarchy");
+        service.failed();
+        deliver({type: "ready", protocol: 1});
+        deliver({type: "configured", address: service.savedAddress});
+        deliver({type: "state", state: {status: "pause", volume: 20}});
+        compare(service.backendError, "");
+        compare(service.lastError, "Could not save the address in Omarchy");
+    }
+    function test_unsupported_protocol_stops_without_restart_or_commands() {
+        service.autoStart = true;
+        service.startBackend();
+        online();
+        service.action("play");
+        service.setVolume(25, true);
+        deliver({type: "ready", protocol: 2, features: ["albums", "playlists"]});
+        verify(service.protocolRejected);
+        verify(!service.online && !service.ready && !service.connecting && !service.busy);
+        compare(service.pendingVolume, -1);
+        compare(Harness.process.running, false);
+        verify(service.backendError.indexOf("Unsupported backend protocol") >= 0);
+        var count = Harness.requests.length;
+        var starts = Harness.starts;
+        service.failed();
+        service.startBackend();
+        service.action("play");
+        deliver({type: "state", state: {status: "play", volume: 20}});
+        wait(3100);
+        verify(!service.online);
+        compare(Harness.requests.length, count);
+        compare(Harness.starts, starts);
+    }
+    function test_timing_follows_snapshots_and_is_cleared_on_configuration() {
+        online();
+        var count = Harness.requests.length;
+        for (var status of ["play", "pause", "stop"]) {
+            deliver({type: "state", state: {status: status, seek: 53057, duration: 809, volume: 20}});
+            compare(service.snapshot.seek, 53057);
+        }
+        deliver({type: "connection", online: false});
+        compare(service.snapshot.seek, 53057);
+        deliver({type: "state", state: {status: "play", seek: 1000, duration: 60, volume: 20}});
+        compare(service.snapshot.seek, 1000);
+        deliver({type: "configured", address: "http://new.local/"});
+        compare(service.snapshot.seek, undefined);
+        compare(Harness.requests.length, count);
     }
     function test_process_exit_schedules_one_restart() {
         service.autoStart = true;

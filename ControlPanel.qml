@@ -71,6 +71,7 @@ Ui.Panel {
             onMoveRequested: function(dx, dy) {
                 if (dx !== 0 && root.online && !root.snapshot.disableVolumeControl)
                     root.service.adjustVolume(dx);
+                if (dy !== 0) content.scrollBy(dy * Style.space(40));
             }
             AlbumBrowser {
                 id: browser
@@ -92,10 +93,11 @@ Ui.Panel {
                 onBackRequested: root.hideBrowser()
                 onCloseRequested: root.close()
             }
-            Column {
+            ControlViewport {
                 id: content
                 visible: !root.browsingLibrary
-                width: parent.width
+                anchors.fill: parent
+                foreground: root.foreground
                 spacing: Style.space(12)
                 Row {
                     width: parent.width
@@ -128,6 +130,15 @@ Ui.Panel {
                         Label { text: root.snapshot.artist || "Unknown artist" }
                         Label { text: root.snapshot.album || ""; opacity: 0.65; visible: text !== "" }
                     }
+                }
+                PlaybackTiming {
+                    width: parent.width
+                    snapshot: root.snapshot
+                    online: root.online
+                    foreground: root.foreground
+                    fontFamily: root.fontFamily
+                    fontSize: Style.font.caption
+                    trackHeight: Style.space(3)
                 }
                 Label {
                     text: Model.statusLabel(root.online, root.service ? root.service.connecting : true, root.snapshot)
@@ -214,11 +225,10 @@ Ui.Panel {
                         focusable: true; text: "Refresh"; foreground: root.foreground; onClicked: if (root.service) root.service.refresh() }
                 }
                 Label {
-                    text: root.service ? root.service.lastError : "Service unavailable"
+                    text: root.service ? root.service.diagnosticError : "Service unavailable"
                     visible: text !== ""
                     color: Commons.Color.urgent
                     wrapMode: Text.Wrap
-                    maximumLineCount: 3
                 }
             }
         }
