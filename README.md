@@ -57,6 +57,10 @@ and starts its internal tracks.
 **Browse playlists** lists playlists saved in Volumio and plays them as saved,
 replacing the current queue.
 
+Commands take priority over state reads, with faster state checks briefly
+after each successful command. Volume changes are sent during dragging,
+and repeated arrow presses accumulate from the latest requested value.
+
 See the [user guide](docs/usage.md) for keyboard shortcuts, connection
 behavior, limitations, and troubleshooting, and [validation results](docs/validation.md)
 for tested behavior and remaining gaps.

@@ -54,12 +54,20 @@ and height on vertical bars.
 ## Rust backend
 
 Tokio handles stdin, timers and one state/transport HTTP task at a time.
+An accepted command cancels an in-flight state read and takes its slot; the
+cancelled read's result is discarded. Submitted commands and album/playlist
+activations are never preempted. Cancelling a client read does not guarantee
+that Volumio stops processing it on the server.
 A separate cancellable library task makes sequential browse requests so
 loading the grid does not block state polling or transport commands. Reqwest/rustls makes
 direct requests with a three-second timeout and a 1 MiB response limit.
 Redirects and proxy use are disabled for backend requests. After a successful
-state response, `GET /api/v1/getState` is scheduled two seconds later; commands
-schedule an immediate refresh. Active transport/album tasks delay polling,
+state response, `GET /api/v1/getState` is normally scheduled two seconds later.
+Successful commands schedule an immediate refresh, followed by reads 250 ms
+after each response for a two-second settling window (including a final read
+at the deadline). Each successful command renews that window; configuration
+and request errors clear it. These are state reads, never command retries.
+Active transport/album tasks delay polling,
 and connection failures apply the backoff below. Polling avoids a Socket.IO
 dependency for this MVP. Artwork is loaded separately by QML.
 
@@ -116,8 +124,17 @@ channel sends library events to the main loop, which alone writes stdout.
 | `result` | Request ID, `ok`, optional error; null ID for unreadable requests. |
 
 QML permits one transport command, album activation or playlist activation at
-a time. Volume requests are tracked separately and coalesced with a 150 ms timer and one
-pending value. EOF terminates the backend.
+a time. Volume requests are tracked separately: the first drag value is sent
+immediately, then the latest value is sent at most once per 150 ms while
+dragging, with at most one request awaiting acknowledgement. Release and
+keyboard input bypass the timer, but still wait for any pending volume request.
+The service's `adjustVolume(delta)` accumulates keyboard changes from the
+latest requested value. `effectiveVolume` exposes that local target to the
+slider without changing the confirmed snapshot. A matching state clears the
+target once no volume requests remain; otherwise it expires 2.5 seconds after
+the final acknowledgement. Failure, disconnect, reconfiguration or disabled
+volume drops pending values and the target without replay. EOF terminates
+the backend. The JSON-lines protocol is unchanged.
 The diagnostic Omarchy IPC target exposes `status`, `refresh`, `configure`,
 `action` and `volume`. Status includes the effective/saved address, bar icon
 mode, process ID, panel-open flag, state and last command/startup error.

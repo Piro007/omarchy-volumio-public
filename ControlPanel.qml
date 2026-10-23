@@ -70,7 +70,7 @@ Ui.Panel {
             onActivateRequested: if (root.service) root.service.action(root.snapshot.status === "play" ? "pause" : "play")
             onMoveRequested: function(dx, dy) {
                 if (dx !== 0 && root.online && !root.snapshot.disableVolumeControl)
-                    root.service.setVolume(root.snapshot.volume + dx, true);
+                    root.service.adjustVolume(dx);
             }
             AlbumBrowser {
                 id: browser
@@ -168,14 +168,14 @@ Ui.Panel {
                         width: parent.width
                         bar: root.bar
                         minimum: 0; maximum: 100; step: 1; integer: true
-                        value: typeof root.snapshot.volume === "number" ? root.snapshot.volume : 0
+                        value: root.service ? root.service.effectiveVolume : 0
                         enabled: root.online && !root.snapshot.disableVolumeControl
                         opacity: enabled ? 1 : 0.4
                         activeFocusOnTab: true
                         onMoved: function(value) { root.service.setVolume(value, false); }
                         onReleased: function(value) { root.service.setVolume(value, true); }
-                        Keys.onLeftPressed: if (enabled) root.service.setVolume(Math.max(0, value - 1), true)
-                        Keys.onRightPressed: if (enabled) root.service.setVolume(Math.min(100, value + 1), true)
+                        Keys.onLeftPressed: if (enabled) root.service.adjustVolume(-1)
+                        Keys.onRightPressed: if (enabled) root.service.adjustVolume(1)
                     }
                 }
                 Row {

@@ -11,6 +11,8 @@ use tokio::{
 };
 
 const POLL: Duration = Duration::from_secs(2);
+const SETTLE_POLL: Duration = Duration::from_millis(250);
+const SETTLE_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Deserialize)]
 struct Request {
@@ -217,8 +219,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut volume_enabled = false;
     let mut failures = 0;
     let mut next_poll = Instant::now();
+    let mut settle_until = Instant::now();
     emit(json!({"type":"ready","protocol":1,"features":["albums","playlists"]})).await?;
     loop {
+        // Only reads are preemptible. Never cancel or replay a submitted command.
+        if !queue.is_empty()
+            && active_id.is_none()
+            && let Some(task) = job.take()
+        {
+            task.abort();
+        }
         if job.is_none()
             && let Some(endpoint) = base.clone()
         {
@@ -269,6 +279,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 emit(json!({"type":"result","id":old.id,"ok":false,"error":"Address changed"})).await?;
                             }
                             base = Some(url.clone()); online = false; volume_enabled = false; failures = 0; next_poll = Instant::now();
+                            settle_until = Instant::now();
                             emit(json!({"type":"configured","id":request.id,"address":url.as_str()})).await?;
                             emit(json!({"type":"connection","online":false,"connecting":true})).await?;
                         }
@@ -322,14 +333,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 match completed.result {
                     Ok(Some(snapshot)) => {
                         online = true; volume_enabled = !snapshot.disable_volume_control; failures = 0;
-                        next_poll = Instant::now() + POLL;
+                        let now = Instant::now();
+                        next_poll = if now < settle_until {
+                            (now + SETTLE_POLL).min(settle_until)
+                        } else {
+                            now + POLL
+                        };
                         emit(json!({"type":"state","online":true,"state":snapshot})).await?;
                     }
                     Ok(None) => {
                         emit(json!({"type":"result","id":completed.id,"ok":true})).await?;
                         next_poll = Instant::now();
+                        settle_until = next_poll + SETTLE_WINDOW;
                     }
                     Err(error) => {
+                        settle_until = Instant::now();
                         if let Some(id) = completed.id {
                             emit(json!({"type":"result","id":id,"ok":false,"error":error})).await?;
                         }

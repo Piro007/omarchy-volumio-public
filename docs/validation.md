@@ -1,5 +1,38 @@
 # Validation
 
+## Command responsiveness (2026-10-22)
+
+Source base: `80ca75e`; implemented on `feat/initial-plugin`. Commands now
+preempt state reads, successful commands trigger a bounded period of faster
+polling, and volume dragging/keyboard input uses a coalesced local target.
+The HTTP backend, QML architecture and JSON-lines protocol v1 are preserved.
+
+Observed results:
+
+- `bash scripts/check.sh`: passed. Formatting, Clippy, build, 3 Rust tests,
+  16 loopback bridge tests and 32 QML test functions (38 including
+  setup/cleanup), official manifest validation and production QML lint.
+- A held state response does not block play, volume or pause; releasing it
+  does not restore stale state. A simulated effect delayed by 300 ms is
+  observed within 1.5 seconds, and polling returns to its normal cadence
+  after the two-second settling window. No command is replayed.
+- QML tests cover continuous drag updates before release, latest-value
+  release, duplicate release suppression, accumulated keyboard adjustments,
+  volume bounds, confirmation/expiry, and reset on disconnect, errors,
+  address configuration, backend failure and disabled volume control.
+- `git diff --check` passed.
+
+Prior diagnostic measurements on the real player, before implementation:
+12 pings averaged 3.955 ms with no loss; 12 read-only state requests had a
+6.5 ms median and 9.3 ms maximum response time while paused. The owner
+reported delayed sound and display. These measurements do not determine
+command-processing or audible latency, or rule out intermittent network load.
+
+No installed-copy update, desktop configuration change, shell restart or
+real-player command was performed. Real-shell slider/keyboard behavior and
+the actual audible improvement remain unverified. Existing binary archives
+were not regenerated.
+
 ## Saved playlist browser (2026-10-22)
 
 Source base: `4261099` on `main`. Added the name-only **Browse playlists**

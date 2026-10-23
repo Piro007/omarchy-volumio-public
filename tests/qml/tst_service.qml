@@ -166,6 +166,90 @@ TestCase {
         service.setVolume(50, true);
         compare(Harness.requests.length, 3);
     }
+    function test_continuous_volume_drag_sends_before_release() {
+        online();
+        service.setVolume(21, false);
+        compare(Harness.requests[1].volume, 21);
+        deliver({type: "result", id: service.pendingVolume, ok: true});
+        for (var i = 22; i <= 29; ++i) {
+            service.setVolume(i, false);
+            wait(40);
+            if (service.pendingVolume >= 0)
+                deliver({type: "result", id: service.pendingVolume, ok: true});
+        }
+        verify(Harness.requests.length >= 3);
+        verify(Harness.requests.length <= 5);
+        service.setVolume(30, true);
+        compare(Harness.requests[Harness.requests.length - 1].volume, 30);
+    }
+    function test_volume_keyboard_accumulates_until_state_confirmation() {
+        online();
+        service.adjustVolume(1);
+        var first = service.pendingVolume;
+        service.adjustVolume(1);
+        service.adjustVolume(1);
+        compare(service.effectiveVolume, 23);
+        compare(Harness.requests.length, 2);
+        deliver({type: "result", id: first, ok: true});
+        compare(Harness.requests[2].volume, 23);
+        deliver({type: "result", id: service.pendingVolume, ok: true});
+        deliver({type: "state", state: {status: "pause", volume: 21, disableVolumeControl: false}});
+        service.adjustVolume(1);
+        compare(Harness.requests[3].volume, 24);
+        deliver({type: "result", id: service.pendingVolume, ok: true});
+        deliver({type: "state", state: {status: "pause", volume: 24, disableVolumeControl: false}});
+        compare(service.targetVolume, -1);
+        compare(service.effectiveVolume, 24);
+        service.adjustVolume(200);
+        compare(service.effectiveVolume, 100);
+        service.adjustVolume(-200);
+        compare(service.effectiveVolume, 0);
+    }
+    function test_volume_release_does_not_duplicate_submitted_value() {
+        online();
+        service.setVolume(25, false);
+        service.setVolume(25, true);
+        compare(service.desiredVolume, -1);
+        deliver({type: "result", id: service.pendingVolume, ok: true});
+        wait(200);
+        compare(Harness.requests.length, 2);
+        // A newer value waiting behind an in-flight request must still flush.
+        service.setVolume(26, false);
+        var pending = service.pendingVolume;
+        service.setVolume(27, false);
+        service.setVolume(27, true);
+        deliver({type: "result", id: pending, ok: true});
+        compare(Harness.requests[Harness.requests.length - 1].volume, 27);
+    }
+    function test_volume_unconfirmed_target_expires_without_replay() {
+        online();
+        service.adjustVolume(1);
+        deliver({type: "result", id: service.pendingVolume, ok: true});
+        compare(service.effectiveVolume, 21);
+        tryCompare(service, "targetVolume", -1, 3000);
+        compare(service.effectiveVolume, 20);
+        compare(Harness.requests.length, 2);
+    }
+    function test_volume_pending_values_are_discarded_on_reset() {
+        for (var reason of ["offline", "disabled", "configured", "failed", "rejected"]) {
+            online();
+            service.setVolume(21, false);
+            var pending = service.pendingVolume;
+            service.setVolume(30, false);
+            if (reason === "offline") deliver({type: "connection", online: false});
+            else if (reason === "disabled") deliver({type: "state", state: {status: "pause", volume: 20, disableVolumeControl: true}});
+            else if (reason === "configured") deliver({type: "configured", address: "http://new.local/"});
+            else if (reason === "failed") service.failed();
+            else deliver({type: "result", id: pending, ok: false, error: "Timeout"});
+            var count = Harness.requests.length;
+            deliver({type: "result", id: pending, ok: true});
+            wait(200);
+            compare(Harness.requests.length, count);
+            compare(service.targetVolume, -1);
+            compare(service.desiredVolume, -1);
+            compare(service.pendingVolume, -1);
+        }
+    }
     function test_offline_blocks_actions_and_preserves_metadata() {
         online();
         deliver({type: "connection", online: false, connecting: false});

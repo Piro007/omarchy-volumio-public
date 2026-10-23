@@ -26,6 +26,9 @@ Item {
     property int pendingCommand: -1
     property int pendingVolume: -1
     property int desiredVolume: -1
+    property int targetVolume: -1
+    property bool volumeFinal: false
+    readonly property int effectiveVolume: targetVolume >= 0 ? targetVolume : (typeof snapshot.volume === "number" ? snapshot.volume : 0)
     property bool supportsLibrary: false
     property alias albums: albumModel
     property int browseId: -1
@@ -60,11 +63,13 @@ Item {
         value = String(value || "http://volumio.local");
         savedAddress = value;
         if (value.replace(/\/$/, "") === address.replace(/\/$/, "")) return;
+        clearVolume();
         address = value;
         if (ready) send("configure", {address: address});
     }
     function saveAddress(value) {
         if (!ready) { lastError = "Backend unavailable"; return; }
+        clearVolume();
         pendingSave = send("configure", {address: String(value).trim()});
     }
     // Coerces the stored value to one of the two supported modes.
@@ -162,16 +167,34 @@ Item {
         pendingCommand = send(op);
     }
     function setVolume(value, finalValue) {
-        if (!online || snapshot.disableVolumeControl) return;
-        desiredVolume = Math.max(0, Math.min(100, Math.round(value)));
-        if (finalValue) { volumeTimer.stop(); flushVolume(); }
-        else volumeTimer.restart();
+        if (!ready || !online || snapshot.disableVolumeControl || typeof snapshot.volume !== "number" || !isFinite(value)) return;
+        var next = Math.max(0, Math.min(100, Math.round(value)));
+        // Release/wheel can repeat the value already submitted by moved().
+        if (next === targetVolume && desiredVolume < 0) return;
+        desiredVolume = next;
+        targetVolume = desiredVolume;
+        volumeFinal = finalValue;
+        volumeConfirmTimer.stop();
+        if (finalValue) volumeTimer.stop();
+        if (!volumeTimer.running) flushVolume();
+    }
+    function adjustVolume(delta) {
+        setVolume(effectiveVolume + delta, true);
+    }
+    function clearVolume() {
+        pendingVolume = -1;
+        desiredVolume = -1;
+        targetVolume = -1;
+        volumeFinal = false;
+        volumeTimer.stop();
+        volumeConfirmTimer.stop();
     }
     function flushVolume() {
-        if (desiredVolume < 0 || pendingVolume >= 0 || !online) return;
+        if (desiredVolume < 0 || pendingVolume >= 0 || !ready || !online || snapshot.disableVolumeControl) return;
         var value = desiredVolume;
         desiredVolume = -1;
         pendingVolume = send("volume", {volume: value});
+        volumeTimer.restart();
     }
     function receive(line) {
         var event;
@@ -191,7 +214,7 @@ Item {
             clearLibrary();
             address = event.address;
             snapshot = ({});
-            desiredVolume = -1;
+            clearVolume();
             lastError = "";
             if (event.id === pendingSave) {
                 pendingSave = -1;
@@ -220,13 +243,17 @@ Item {
             libraryError = String(event.error || "Could not load albums");
         } else if (event.type === "state") {
             snapshot = event.state;
+            if (snapshot.disableVolumeControl || typeof snapshot.volume !== "number") clearVolume();
+            else if (pendingVolume < 0 && desiredVolume < 0 && snapshot.volume === targetVolume) {
+                targetVolume = -1;
+                volumeConfirmTimer.stop();
+            }
             online = true;
             connecting = false;
         } else if (event.type === "connection") {
             online = false;
             connecting = event.connecting === true;
-            desiredVolume = -1;
-            volumeTimer.stop();
+            clearVolume();
         } else if (event.type === "result") {
             if (event.id === pendingPlaylist) {
                 pendingPlaylist = -1;
@@ -246,8 +273,10 @@ Item {
             if (event.id === pendingSave) pendingSave = -1;
             if (event.id === pendingVolume) {
                 pendingVolume = -1;
-                if (event.ok) flushVolume();
-                else desiredVolume = -1;
+                if (event.ok) {
+                    if (volumeFinal || !volumeTimer.running) flushVolume();
+                    if (pendingVolume < 0 && desiredVolume < 0) volumeConfirmTimer.restart();
+                } else clearVolume();
             }
             if (!event.ok) lastError = String(event.error || "Command failed");
         }
@@ -259,8 +288,8 @@ Item {
         clearLibrary();
         libraryError = "Backend unavailable. Reopen the browser after reconnection.";
         playlistError = "Backend unavailable. Reopen the browser after reconnection.";
-        pendingSave = -1; pendingCommand = -1; pendingVolume = -1; desiredVolume = -1;
-        volumeTimer.stop();
+        pendingSave = -1; pendingCommand = -1;
+        clearVolume();
         startupTimer.stop();
         lastError = "Backend unavailable. Retrying in 3 s; build the installed plugin if this persists.";
         if (autoStart && !stopping) restartTimer.restart();
@@ -274,6 +303,8 @@ Item {
     Component.onCompleted: if (autoStart) startBackend()
     Component.onDestruction: { stopping = true; restartTimer.stop(); startupTimer.stop(); configTimer.stop(); configReader.running = false; backend.running = false; }
     Timer { id: volumeTimer; interval: 150; onTriggered: root.flushVolume() }
+    // Show the requested volume briefly while the player settles, then reconcile.
+    Timer { id: volumeConfirmTimer; interval: 2500; onTriggered: root.targetVolume = -1 }
     Timer { id: restartTimer; interval: 3000; onTriggered: root.startBackend() }
     // Host plugin facades can retain old snapshots across a rescan. Read the
     // current configuration through official IPC when a backend starts.
