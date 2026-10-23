@@ -1,7 +1,11 @@
 # Omarchy Volumio
 
 Control one Volumio player from the Omarchy bar: playback, volume, metadata,
-cover art, internal-storage albums, and saved playlists.
+cover art, playback timing, internal-storage albums, and saved playlists.
+
+Version 0.3.0 adds confirmed elapsed/total time and a read-only progress bar,
+scrolling on short screens, clearer recovery diagnostics, and stricter HTTP
+acknowledgement handling.
 
 ## Requirements
 
@@ -56,6 +60,10 @@ shows internal-storage albums; selecting one **replaces the current queue**
 and starts its internal tracks.
 **Browse playlists** lists playlists saved in Volumio and plays them as saved,
 replacing the current queue.
+
+Elapsed/total time follows the player's reported state. The progress bar is
+read-only; unavailable timing appears as `--:--`. Scroll the controls on short
+screens to reach the Player settings and any detailed errors.
 
 Commands take priority over state reads, with faster state checks briefly
 after each successful command. Volume changes are sent during dragging,

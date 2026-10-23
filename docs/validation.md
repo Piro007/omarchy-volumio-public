@@ -1,6 +1,70 @@
 # Validation
 
-## Command responsiveness (2026-10-22)
+## Current revision: 0.3.0 maintenance and playback timing (2026-10-23)
+
+Source base: public tag `v0.2.4` (`b1f3d41`), implemented on the local
+`feat/Optimization` branch. The existing Rust HTTP/JSON-lines and native QML
+architecture is retained. No dependency versions or pinned toolchain changed.
+
+The review reproduced an HTTP 302 command acknowledgement incorrectly
+reported as successful. Backend responses now require a 2xx status. The
+service separates recovery diagnostics from command/settings failures, and
+stops incompatible backends with a rebuild/restart instruction. Optional
+confirmed timing, a read-only progress bar and scrolling controls were added.
+Package metadata is aligned at 0.3.0 and version agreement is checked.
+
+Observed results:
+
+- `bash scripts/check.sh`: passed. Rust formatting, Clippy and build; 4 Rust
+  unit tests, 10 offline support tests, 19 loopback integration tests and
+  40 QML test functions (50 including setup/cleanup); official manifest
+  validation and lint for all eight production QML files.
+- `bash scripts/package.sh`: passed. The native 0.3.0 archive's SHA-256,
+  exact file list and equality with source files passed verification. Its
+  extracted executable announced protocol v1 and both library features,
+  then exited cleanly on EOF. No player configuration was supplied.
+- Shell/Python syntax, local documentation links and `git diff --check` passed.
+- Redirected playback, playlist and album activations fail without following
+  redirects or replaying commands; empty/text 2xx acknowledgements still work.
+- Optional timing preserves milliseconds/seconds, accepts numeric strings,
+  tolerates missing/invalid values and causes no playback requests. QML checks
+  formatting, clamping, missing duration, no interpolation/seeking, offline
+  dimming, track changes and reset after reconfiguration.
+- Recovery clears transient diagnostics while retaining command and save
+  failures; unsupported protocols stop without restart loops or new commands.
+- The actual controls viewport is tested at constrained height, including
+  scroll limits and automatically revealing a focused field.
+- Offline tests verify live-test restoration after failures, offline-player
+  restoration of address/icon/position, bounded subprocesses, optional player
+  fields and disabled volume. They never call a real shell or player.
+- A controlled check-script test supplies conflicting Cargo target/directory
+  and binary-path overrides and verifies that the fresh native binary from
+  the script's own checkout is selected. Version-mismatch tests cover each
+  manifest/Cargo/lockfile mismatch independently.
+
+Remaining validation limits:
+
+- No installed-copy update, desktop configuration change, shell restart,
+  real-player request or playback control was performed in this revision.
+- Offscreen tests cover the new components and service; the complete panel's
+  real-shell layout, wheel/touch interaction, slider dragging inside the
+  viewport, keyboard behavior and multi-monitor behavior remain unverified.
+- Live-test cleanup is tested with mocks; actual restoration through the
+  installed Omarchy shell still requires the opt-in live check.
+- Existing real-player album/playlist limitations below remain. Other
+  architectures and libc combinations have not been tested.
+
+## Historical results
+
+The following notes are preserved evidence for earlier revisions, not fresh
+validation of 0.3.0. Their test counts, pending checks, branch names and
+statements about publication or archives apply to those earlier revisions.
+Owner reports remain distinct from observed results. Inherited source refs
+`80ca75e`, `4261099`, `2eb78dc`, `d2e7aea` and `ce2d449` are absent from this
+public checkout's local history; they cannot be used here to reproduce those
+historical revisions. Current results supersede only checks explicitly repeated.
+
+### Command responsiveness (2026-10-22)
 
 Source base: `80ca75e`; implemented on `feat/initial-plugin`. Commands now
 preempt state reads, successful commands trigger a bounded period of faster
@@ -33,7 +97,7 @@ real-player command was performed. Real-shell slider/keyboard behavior and
 the actual audible improvement remain unverified. Existing binary archives
 were not regenerated.
 
-## Saved playlist browser (2026-10-22)
+### Saved playlist browser (2026-10-22)
 
 Source base: `4261099` on `main`. Added the name-only **Browse playlists**
 view, cached/cancellable saved-playlist listing and direct playlist activation.
@@ -63,7 +127,7 @@ The new list's real-shell appearance/keyboard behavior and actual Volumio
 playlist activation remain unverified. Existing owner reports about album
 browsing do not establish playlist validation.
 
-## Album tile hover styling (2026-10-22)
+### Album tile hover styling (2026-10-22)
 
 Source base: `2eb78dc` on `main`. Album tiles now keep a transparent background
 and no border on pointer hover. A one-pixel theme-colored outline marks the
@@ -79,7 +143,7 @@ Owner-reported: the plugin and album browsing work in real use. The updated
 hover appearance has not been checked in the real shell. No deployment,
 shell restart or live player control was performed during this change.
 
-## Focused album tests and documentation (2026-10-22)
+### Focused album tests and documentation (2026-10-22)
 
 Source base: `d2e7aea` on `main`. This pass changes tests and documentation
 only; no production-code fixes were needed for the added test cases.
@@ -110,13 +174,6 @@ service, not the album grid's visual layout or keyboard handling. No live
 desktop/player tests, installation, shell restart or package rebuild were
 performed. Real-player album activation and real-shell browser/icon behavior
 remain unverified. Existing generated archives were not refreshed by this pass.
-
-## Historical results
-
-The sections below record earlier revisions and their validation scope.
-Their statements about pending tests, installations and archives apply to
-those revisions; the current results above supersede only the checks they
-explicitly cover. Owner-reported results remain distinct from observed tests.
 
 ### Bar icon modes (2026-10-22)
 

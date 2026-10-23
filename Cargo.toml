@@ -1,6 +1,6 @@
 [package]
 name = "omarchy-volumio"
-version = "0.1.0"
+version = "0.3.0"
 edition = "2024"
 license = "MIT"
 description = "Volumio JSON-lines bridge for the Omarchy shell"

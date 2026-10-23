@@ -20,14 +20,30 @@ invoke its installed script; building another checkout does not deploy it.
 
 ## Automated checks
 
-Python 3 suffices for HTTP tests; no pip packages are required. Qt tools are
+Python 3.11 or newer is needed for the test and packaging metadata checks;
+no pip packages are required. Qt tools are
 expected under `/usr/lib/qt6/bin`, and shell imports under
 `$OMARCHY_PATH/shell` or `/usr/share/omarchy/shell`.
 
 - Rust tests cover address, metadata, volume and backoff normalization.
+- Timing tests cover optional values, milliseconds/seconds, numeric strings and invalid values.
+- Offline support tests cover release-version agreement, bounded live-test subprocess calls and failure-path restoration without desktop/player I/O.
 - `tests/test_bridge.py` runs the real executable against local HTTP servers: JSON errors, timeouts, commands, reconnects, cancellation and no replay, plus album filtering, pagination, ordered queue replacement, failed lookups and saved-playlist listing/playback.
 - QML tests exercise display/configuration helpers and the actual service with mocked Quickshell I/O: persistence, pending-command cleanup, volume coalescing, offline controls, startup/restart, album/playlist caching, stale listing results and duplicate activation suppression.
 - `omarchy plugin validate` checks the manifest; `qmllint` checks the production QML against installed Omarchy imports.
+
+The check script explicitly selects the host target and this checkout's
+`target/`, and supplies that exact debug binary as `VOLUMIO_BINARY` to the
+bridge tests. Caller overrides of Cargo target, target directory or binary
+path cannot redirect the check to an old executable. Standalone bridge tests
+can still use `VOLUMIO_BINARY` to select a release/archive executable.
+Checks and packaging reject mismatched versions in the manifest, Cargo
+package and lockfile; dependency versions and the pinned toolchain are retained.
+
+Offscreen QML tests exercise the actual timing and scrolling components:
+formatting, missing timing, clamping, lack of interpolation/seeking, offline
+dimming, constrained height, scrolling limits and focus visibility. These
+component tests do not establish real-shell appearance or compositor behavior.
 
 The QML mock directory is supplied only to `qmltestrunner`; production lint
 and the installed plugin use real Quickshell. `missing-property` warnings are
@@ -58,14 +74,20 @@ python3 tests/live_player.py --run
 The shell test changes the plugin address temporarily, reloads plugins,
 terminates only its backend, exercises network recovery against a loopback
 server, disables/re-enables the plugin in its original bar position, and restores
-the original effective address. It must run in the graphical session and
-requires configuration/process-control permission. It restores the address and
-bar position, but does not restore the icon mode after disable/re-enable; save
-and restore that mode separately. It does not command playback. The read-only
+the original saved address, icon mode and bar position through official APIs.
+All connected lifecycle checks use a loopback fixture; the original player
+need not be online for restoration. It must run in the graphical session and
+requires configuration/process-control permission. Every IPC subprocess has
+a five-second timeout. Cleanup inspects the actual layout after a failure and
+attempts independent restoration steps once, without replaying timed-out commands.
+It does not command playback. The read-only
 player test compares API metadata and artwork without commands.
 The playback test briefly plays/pauses and lowers volume by one
 point, then attempts restoration in `finally`; avoid it while someone is
-listening. Do not change player system settings.
+listening. Player restoration uses the original endpoint directly, and plugin
+settings restoration is attempted even if player restoration fails. Missing
+volume/seek fields are tolerated and disabled volume is respected. Restoration
+errors are reported rather than treated as success. Do not change player system settings.
 
 Useful diagnostics:
 
@@ -87,6 +109,11 @@ reload/restart, and restore the address and icon mode after any
 disable/re-enable test. A rescan can retain cached QML on the tested version;
 restart the shell after source updates.
 
+For timing, check a normal track, a track longer than an hour, a source without
+duration, pause/stop, track changes and disconnect. On a short screen or large
+UI scale, verify scrolling reaches settings and complete error messages,
+focus remains visible, and the volume slider still drags correctly.
+
 ## Album browser validation
 
 The default suite includes focused album checks using the existing loopback
@@ -104,7 +131,7 @@ These tests do not render the album grid or verify Volumio's server-side
 queue semantics. A later live check can cover Back/Escape, keyboard focus,
 small screens, artwork and one real album activation. Desktop changes and
 queue replacement require their respective explicit permissions. Live checks
-are deferred from the documentation and focused-test work.
+remain opt-in and have not been run for the current maintenance revision.
 
 Actual results and remaining gaps are recorded in [validation](validation.md).
 

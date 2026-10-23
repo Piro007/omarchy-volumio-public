@@ -5,27 +5,61 @@ and restores the player and plugin configuration in a finally block.
 """
 import argparse
 import json
-import subprocess
-import time
 import urllib.parse
 import urllib.request
+import math
+from live_support import PLUGIN, call, wait, capture_settings, restore_settings
 
 
 def ipc(*args):
-    result = subprocess.run(["omarchy-shell", "delormous.volumio", *args],
-                            check=True, capture_output=True, text=True)
-    return result.stdout.strip()
+    return call(PLUGIN, *args)
 
 
-def wait(predicate, timeout=12):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = json.loads(ipc("status"))
-        if predicate(last):
-            return last
-        time.sleep(.3)
-    raise AssertionError(last)
+def volume_value(value):
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if 0 <= value <= 100 else None
+    if isinstance(value, str) and value.isascii() and value.isdigit():
+        number = int(value)
+        return number if number <= 100 else None
+    return None
+
+
+def seek_seconds(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+        return None
+    try:
+        number = float(value)
+        return int(number / 1000) if math.isfinite(number) and number >= 0 else None
+    except ValueError:
+        return None
+
+
+def matches_state(snapshot, api):
+    return (snapshot.get("status") == api.get("status")
+            and all(snapshot.get(key, "") == (api.get(key) if isinstance(api.get(key), str) else "")
+                    for key in ("title", "artist", "album"))
+            and snapshot.get("volume") == volume_value(api.get("volume")))
+
+
+def restore_player(original, get):
+    errors = []
+    commands = []
+    volume = volume_value(original.get("volume"))
+    if not original.get("disableVolumeControl") and volume is not None:
+        commands.append("volume&volume=" + str(volume))
+    seek = seek_seconds(original.get("seek"))
+    if original["status"] in ("play", "pause") and seek is not None:
+        commands.append("seek&position=" + str(seek))
+    commands.append(original["status"])
+    for command in commands:
+        try:
+            get("api/v1/commands/?cmd=" + command)
+        except (OSError, ValueError) as error:
+            errors.append(str(error))
+    if errors:
+        raise RuntimeError("Player restoration incomplete: " + "; ".join(errors))
 
 
 def main():
@@ -43,10 +77,9 @@ def main():
             return response.read()
 
     original = json.loads(get("api/v1/getState"))
-    print("Initial:", json.dumps({k: original[k] for k in ("status", "volume", "seek")}), flush=True)
+    print("Initial:", json.dumps({k: original.get(k) for k in ("status", "volume", "seek")}), flush=True)
     if args.read_only:
-        for key in ("status", "title", "artist", "album", "volume"):
-            assert initial["state"].get(key) == original.get(key), key
+        wait(lambda s: s["online"] and matches_state(s["state"], json.loads(get("api/v1/getState"))))
         art = initial["state"].get("albumart")
         if art:
             with opener.open(art, timeout=10) as response:
@@ -54,6 +87,10 @@ def main():
                 assert response.read()
         print("PASS: real API JSON matches plugin state; artwork readable; no commands sent", flush=True)
         return
+    if original.get("status") not in ("play", "pause", "stop"):
+        raise AssertionError("Unknown initial playback state")
+    saved = capture_settings()
+    original_volume = volume_value(original.get("volume"))
     try:
         ipc("action", "play")
         wait(lambda s: s["state"].get("status") == "play")
@@ -63,11 +100,11 @@ def main():
         wait(lambda s: s["state"].get("status") == "pause")
         assert json.loads(get("api/v1/getState"))["status"] == "pause"
         print("PASS: pause", flush=True)
-        if not original.get("disableVolumeControl") and isinstance(original.get("volume"), int):
-            value = max(0, original["volume"] - 1)
+        if not original.get("disableVolumeControl") and original_volume is not None:
+            value = max(0, original_volume - 1)
             ipc("volume", str(value))
             wait(lambda s: s["state"].get("volume") == value)
-            assert json.loads(get("api/v1/getState"))["volume"] == value
+            assert volume_value(json.loads(get("api/v1/getState")).get("volume")) == value
             print("PASS: volume", value, flush=True)
         art = initial["state"].get("albumart")
         if art:
@@ -82,19 +119,16 @@ def main():
         wait(lambda s: s["online"] and s["address"] == address)
         print("PASS: reconnect to player", flush=True)
     finally:
-        ipc("configure", address)
-        wait(lambda s: s["online"] and s["address"] == address)
-        if not original.get("disableVolumeControl") and isinstance(original.get("volume"), int):
-            get("api/v1/commands/?cmd=volume&volume=" + str(original["volume"]))
-        # Stop restores a stopped track to position zero. Paused tracks retain
-        # a seek position; restore it through the playback API, never settings.
-        if original["status"] in ("play", "pause") and original.get("seek", 0):
-            get("api/v1/commands/?cmd=seek&position=" + str(int(original["seek"] / 1000)))
-        get("api/v1/commands/?cmd=" + original["status"])
-        ipc("refresh")
-        restored = wait(lambda s: s["state"].get("status") == original["status"]
-                        and s["state"].get("volume") == original["volume"])
-        print("RESTORED:", restored["state"]["status"], restored["state"]["volume"], flush=True)
+        try:
+            # Direct requests restore the original player even if plugin IPC failed.
+            restore_player(original, get)
+        finally:
+            # Settings restoration does not require the player to be online.
+            restore_settings(saved)
+    ipc("refresh")
+    restored = wait(lambda s: s["state"].get("status") == original["status"]
+                    and (original_volume is None or s["state"].get("volume") == original_volume))
+    print("RESTORED:", restored["state"].get("status"), restored["state"].get("volume"), flush=True)
 
 
 if __name__ == "__main__":

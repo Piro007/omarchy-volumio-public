@@ -35,8 +35,19 @@ requested volume. The slider shows that requested value while waiting for
 confirmation, then returns to the player's value if it remains unconfirmed
 2.5 seconds after acknowledgement.
 
+Elapsed/total time and a read-only progress bar appear below the metadata.
+They update from confirmed state snapshots at the existing polling cadence,
+without interpolation or additional network requests. Long tracks use
+`h:mm:ss`; missing/invalid timing uses `--:--`. Unknown duration hides the
+progress bar. Clicking the indicator does not seek. Offline timing remains
+visible but dimmed; changing player clears it.
+
+On short screens, scroll the controls vertically to reach every setting and
+the full error message. Focused controls are scrolled into view automatically.
+
 Escape closes the panel. Space/Enter toggles playback and Left/Right adjusts
 volume when the address field is not being edited and neither browser is open.
+Up/Down scrolls the controls in that same context.
 
 The backend normally polls two seconds after each successful state response
 and refreshes immediately after successful commands, then every 250 ms after
@@ -51,6 +62,13 @@ When disconnected, playback and volume controls are disabled and the last
 metadata remains visible. Failed playback and volume commands are never
 replayed automatically. Library-listing failures do not disable otherwise
 working controls.
+
+The panel retains the connection failure reason and reports the retry interval
+(not a countdown). Successful recovery clears connection/startup errors while
+preserving unrelated command and settings failures. An incompatible backend
+protocol stops the backend and requires rebuilding the installed copy and
+restarting the shell. HTTP redirects are rejected; configure the player's
+direct base URL instead of a URL that redirects to another address or login.
 
 ## Bar display
 
@@ -95,7 +113,7 @@ scan cancels it; reopening starts a new scan. Missing covers use a music icon.
 If activation fails after submission, the queue may already have changed.
 Check the player before retrying; activation is never replayed automatically.
 The owner reports that the plugin and album browsing work in real use.
-Automated tests cover simulated players and the service. The new hover
+Automated tests cover simulated players and the service. The hover
 appearance, keyboard behavior and real-player album activation have not been
 independently verified; see [validation results](validation.md).
 
@@ -144,9 +162,12 @@ error with:
 omarchy-shell delormous.volumio status
 ```
 
+Status also includes `backendError`, `connectionError`, `configurationError`
+and `retrySeconds`; `error` combines the currently visible diagnostics.
+
 ## Limitations
 
-Version 0.1.0 supports one player and the official Omarchy bar. Album browsing
+Version 0.3.0 supports one player and the official Omarchy bar. Album browsing
 covers internal storage only, with a 10,000-item limit per album or library
 listing; saved-playlist listing also has a 10,000-name limit and a 1 MiB
 response limit. Queue editing, direct USB/NAS browsing, library management, multiroom,

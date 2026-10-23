@@ -23,6 +23,17 @@ system service. Disabling/destroying the service stops it. Unexpected exit
 clears pending commands and schedules one restart after three seconds.
 A five-second startup watchdog reports a missing/nonresponsive executable.
 Reconnection never replays pending playback or volume requests.
+An unsupported protocol clears pending work, stops the backend without a
+restart loop, and exposes a rebuild/restart instruction. Transient backend,
+connection and configuration-read diagnostics are separate from command/save
+failures. Successful state reads clear only backend/connection errors; a
+successful configuration read clears its own error. Diagnostic IPC's `error`
+combines these messages and reports the retry interval, not a countdown.
+
+The controls use a clipped vertical `ControlViewport` when the fitted panel
+height is smaller than its content. Wheel/touch scrolling and Up/Down can
+reveal lower settings; focus changes reveal the focused control. Browser
+views keep their independent grid/list navigation.
 
 ## Bar icon modes
 
@@ -70,6 +81,9 @@ and request errors clear it. These are state reads, never command retries.
 Active transport/album tasks delay polling,
 and connection failures apply the backoff below. Polling avoids a Socket.IO
 dependency for this MVP. Artwork is loaded separately by QML.
+Every backend response must have a 2xx status before its body is accepted.
+Redirect responses are errors even when their bodies are empty or look like
+successful acknowledgements. Commands are still never retried.
 
 Commands use `/api/v1/commands/?cmd=…`: `play`, `pause`, `prev`, `next` and
 `volume`. HTTP acknowledgement alone does not prove a playback change;
@@ -82,6 +96,17 @@ Metadata is plain text; optional fields are tolerated. Unknown playback
 states are rejected. Volume must be 0–100; missing volume or
 `disableVolumeControl` disables adjustment. Only HTTP(S) artwork is accepted;
 relative URLs are resolved against the player and loaded asynchronously by QML.
+
+State events add nullable `seek` (milliseconds) and `duration` (seconds),
+without changing protocol v1 or requiring a feature flag. Numeric values and
+numeric strings are accepted only when finite, nonnegative and within the
+JavaScript safe-integer range; duration must also be positive. Missing or
+invalid fields become null. Older backends simply display unavailable timing.
+`PlaybackTiming` formats confirmed values as `m:ss` or `h:mm:ss`, clamps the
+progress fraction to 0–1 and hides the bar without valid seek and duration.
+It has no input handlers, timer, interpolation or additional state requests.
+Disconnected timing stays dimmed with the last snapshot; reconfiguration
+clears it with the rest of the metadata.
 
 ## JSON-lines protocol v1
 
@@ -137,7 +162,9 @@ volume drops pending values and the target without replay. EOF terminates
 the backend. The JSON-lines protocol is unchanged.
 The diagnostic Omarchy IPC target exposes `status`, `refresh`, `configure`,
 `action` and `volume`. Status includes the effective/saved address, bar icon
-mode, process ID, panel-open flag, state and last command/startup error.
+mode, process ID, panel-open flag, state and combined `error`. It additionally
+exposes `backendError`, `connectionError`, `configurationError` and
+`retrySeconds` for diagnostics. Existing status keys remain available.
 
 ## Album browser
 
